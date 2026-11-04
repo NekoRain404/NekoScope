@@ -1,10 +1,14 @@
 #pragma once
 
-#include <QObject>
+#include "../sensors/SensorCollector.h"
+
+#include <QFutureWatcher>
 #include <QMap>
+#include <QObject>
 #include <QSet>
 #include <QVariantList>
 #include <QVariantMap>
+#include <memory>
 
 namespace neko {
 
@@ -16,19 +20,25 @@ class SensorService final : public QObject
     Q_PROPERTY(QVariantList temperatureHistory READ temperatureHistory NOTIFY readingsChanged)
     Q_PROPERTY(QVariantMap summary READ summary NOTIFY readingsChanged)
     Q_PROPERTY(bool paused READ paused WRITE setPaused NOTIFY pausedChanged)
+    Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
 
 public:
     explicit SensorService(QObject *parent = nullptr);
     SensorService(QString procRoot, QString sysRoot, QObject *parent = nullptr);
+    ~SensorService() override;
 
     QVariantList readings() const;
     QVariantList cpuHistory() const;
     QVariantList temperatureHistory() const;
     QVariantMap summary() const;
     bool paused() const;
+    bool busy() const;
 
 public slots:
+    // Synchronous collection for CLI/tests. Ignored while asynchronous work is pending.
     void sample();
+    // GUI scheduling entry point. Requests while busy are dropped, never queued.
+    void requestSample();
     void resetStatistics();
     void setPaused(bool paused);
     Q_INVOKABLE void toggleFavorite(const QString &id);
@@ -36,45 +46,29 @@ public slots:
 signals:
     void readingsChanged();
     void pausedChanged();
+    void busyChanged();
+    void sampleFinished();
     void temperatureObserved(double celsius);
+    // Emitted every completed collection, even when UI updates are paused.
+    void temperatureSampled(bool available, double celsius);
 
 private:
-    struct Metric {
-        QString name;
-        QString group;
-        QString unit;
-        QString source;
-        double current = 0.0;
-        double minimum = 0.0;
-        double maximum = 0.0;
-        double total = 0.0;
-        quint64 count = 0;
-    };
-    void collect(QVariantMap &values, QVariantMap &sources, QVariantMap &groups,
-                 QVariantMap &names, QVariantMap &units, QVariantMap &mins, QVariantMap &maxs);
-    void appendMetric(const QString &id, const QString &name, const QString &group,
-                      double value, const QString &unit, const QString &source,
-                      double minimum = 0.0, double maximum = 0.0);
+    struct Metric { QList<double> samples; };
+    void applySnapshot(const SensorSnapshot &snapshot);
+    void appendMetric(const QString &id, const QVariantMap &reading);
     void loadFavorites();
 
-    QString procRoot_;
-    QString sysRoot_;
+    // Declared before watcher so collector outlives watcher destruction as well.
+    std::unique_ptr<SensorCollector> collector_;
+    QFutureWatcher<SensorSnapshot> watcher_;
     QVariantList readings_;
     QVariantList cpuHistory_;
     QVariantList temperatureHistory_;
     QVariantMap summary_;
     bool paused_ = false;
+    bool busy_ = false;
     QMap<QString, Metric> metrics_;
-    QMap<QString, quint64> previousCounters_;
-    QMap<QString, quint64> previousCpuTimes_;
     QSet<QString> favorites_;
-    double lastCpuUsage_ = -1.0;
-    double lastMemoryUsage_ = -1.0;
-    double lastMemoryUsedGiB_ = 0.0;
-    double lastMemoryTotalGiB_ = 0.0;
-    double lastCpuTemperature_ = -1.0;
-    double lastCpuFrequencyGHz_ = -1.0;
-    double lastCpuPower_ = -1.0;
 };
 
 } // namespace neko

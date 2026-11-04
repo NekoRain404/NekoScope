@@ -1,0 +1,305 @@
+#include "SensorCollector.h"
+
+#include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QRegularExpression>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+namespace neko {
+namespace {
+constexpr double kGiB = 1024.0 * 1024.0 * 1024.0;
+QString readText(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
+    return QString::fromUtf8(file.readAll()).trimmed();
+}
+bool readNumber(const QString &path, double &value)
+{
+    bool ok = false;
+    const double parsed = readText(path).toDouble(&ok);
+    if (!ok || !std::isfinite(parsed)) return false;
+    value = parsed;
+    return true;
+}
+QStringList fields(const QString &line)
+{
+    return line.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+}
+QString displayName(QString name)
+{
+    name.replace(QLatin1Char('_'), QLatin1Char(' '));
+    return name;
+}
+}
+SensorCollector::SensorCollector(QString procRoot, QString sysRoot)
+    : procRoot_(QDir::cleanPath(std::move(procRoot))), sysRoot_(QDir::cleanPath(std::move(sysRoot)))
+{
+}
+
+SensorSnapshot SensorCollector::collect(Clock::time_point now)
+{
+    SensorSnapshot snapshot;
+    snapshot.collectedAt = QDateTime::currentDateTimeUtc();
+    auto &values = snapshot.values;
+    auto &sources = snapshot.sources;
+    auto &groups = snapshot.groups;
+    auto &names = snapshot.names;
+    auto &units = snapshot.units;
+    QMap<QString, CpuTimes> nextCpuTimes;
+    QMap<QString, Counter> nextCounters;
+    auto add = [&](const QString &id, const QString &name, const QString &group, double value,
+                   const QString &unit, const QString &source) {
+        if (!std::isfinite(value)) return;
+        values.insert(id, value); sources.insert(id, source); groups.insert(id, group);
+        names.insert(id, name); units.insert(id, unit);
+    };
+
+    // /proc/stat CPU counters are cumulative; usage is derived from two actual samples.
+    QFile stat(procRoot_ + QStringLiteral("/stat"));
+    if (stat.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        for (const auto &line : QString::fromUtf8(stat.readAll()).split(QLatin1Char('\n'))) {
+            const auto parts = fields(line);
+            static const QRegularExpression cpuName(QStringLiteral("^cpu[0-9]*$"));
+            if (parts.isEmpty() || !cpuName.match(parts.first()).hasMatch()) continue;
+            if (parts.size() < 5) continue;
+            const QString cpuId = parts.first();
+            quint64 total = 0, idle = 0;
+            bool valid = true;
+            // guest/guest_nice (fields 9/10) are included in user/nice already.
+            for (qsizetype i = 1; i < std::min<qsizetype>(parts.size(), 9); ++i) {
+                bool ok = false;
+                const auto counter = parts.at(i).toULongLong(&ok);
+                if (!ok || counter > std::numeric_limits<quint64>::max() - total) { valid = false; break; }
+                total += counter;
+                if (i == 4 || i == 5) idle += counter;
+            }
+            if (!valid) continue;
+            nextCpuTimes.insert(cpuId, {total, idle});
+            const auto previous = previousCpuTimes_.constFind(cpuId);
+            if (previous == previousCpuTimes_.cend() || total < previous->total || idle < previous->idle) continue;
+            const quint64 deltaTotal = total - previous->total;
+            const quint64 deltaIdle = idle - previous->idle;
+            if (deltaTotal > 0) {
+                const double usage = 100.0 * static_cast<double>(deltaTotal - std::min(deltaTotal, deltaIdle)) / static_cast<double>(deltaTotal);
+                const bool aggregate = cpuId == QStringLiteral("cpu");
+                const QString id = aggregate ? QStringLiteral("cpu.usage") : QStringLiteral("cpu.core.") + cpuId.mid(3) + QStringLiteral(".usage");
+                const QString name = aggregate ? QStringLiteral("CPU utilization") : QStringLiteral("Core %1 utilization").arg(cpuId.mid(3));
+                add(id, name, aggregate ? QStringLiteral("CPU") : QStringLiteral("CPU cores"), usage, QStringLiteral("%"), procRoot_ + QStringLiteral("/stat"));
+            }
+        }
+    }
+
+    // Memory and swap counters are exported in KiB by the kernel.
+    QMap<QString, quint64> mem;
+    QFile meminfo(procRoot_ + QStringLiteral("/meminfo"));
+    if (meminfo.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        for (const auto &line : QString::fromUtf8(meminfo.readAll()).split(QLatin1Char('\n'))) {
+            const auto parts = fields(line);
+            if (parts.size() < 2) continue;
+            bool ok = false;
+            const auto value = parts.at(1).toULongLong(&ok);
+            if (ok) mem.insert(parts.first().chopped(1), value);
+        }
+    }
+    if (mem.value(QStringLiteral("MemTotal")) > 0 && mem.contains(QStringLiteral("MemAvailable"))) {
+        const double total = static_cast<double>(mem.value(QStringLiteral("MemTotal"))) * 1024.0;
+        const double used = std::max(0.0, total - static_cast<double>(mem.value(QStringLiteral("MemAvailable"))) * 1024.0);
+        add(QStringLiteral("memory.used"), QStringLiteral("Memory used"), QStringLiteral("Memory"), used / kGiB, QStringLiteral("GiB"), procRoot_ + QStringLiteral("/meminfo"));
+        add(QStringLiteral("memory.usage"), QStringLiteral("Memory utilization"), QStringLiteral("Memory"), total > 0 ? used * 100.0 / total : 0.0, QStringLiteral("%"), procRoot_ + QStringLiteral("/meminfo"));
+        add(QStringLiteral("memory.total"), QStringLiteral("Memory total"), QStringLiteral("Memory"), total / kGiB, QStringLiteral("GiB"), procRoot_ + QStringLiteral("/meminfo"));
+    }
+    if (mem.contains(QStringLiteral("SwapTotal")) && mem.value(QStringLiteral("SwapTotal")) > 0 && mem.contains(QStringLiteral("SwapFree"))) {
+        const double total = static_cast<double>(mem.value(QStringLiteral("SwapTotal"))) / (1024.0 * 1024.0);
+        const double used = static_cast<double>(mem.value(QStringLiteral("SwapTotal")) - std::min(mem.value(QStringLiteral("SwapTotal")), mem.value(QStringLiteral("SwapFree")))) / (1024.0 * 1024.0);
+        add(QStringLiteral("swap.used"), QStringLiteral("Swap used"), QStringLiteral("Memory"), used, QStringLiteral("GiB"), procRoot_ + QStringLiteral("/meminfo"));
+        add(QStringLiteral("swap.usage"), QStringLiteral("Swap utilization"), QStringLiteral("Memory"), used * 100.0 / total, QStringLiteral("%"), procRoot_ + QStringLiteral("/meminfo"));
+    }
+
+    const auto loadavg = readText(procRoot_ + QStringLiteral("/loadavg")).split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+    if (!loadavg.isEmpty()) { bool ok = false; const double value = loadavg.first().toDouble(&ok); if (ok) add(QStringLiteral("system.load1"), QStringLiteral("Load average (1 min)"), QStringLiteral("System"), value, QStringLiteral(""), procRoot_ + QStringLiteral("/loadavg")); }
+
+    // Frequency policy and CPU power are reported as physical kernel attributes.
+    QDir policies(sysRoot_ + QStringLiteral("/devices/system/cpu/cpufreq"));
+    for (const auto &policy : policies.entryList(QStringList{QStringLiteral("policy*")}, QDir::Dirs | QDir::NoDotAndDotDot)) {
+        double khz = 0;
+        if (readNumber(policies.filePath(policy + QStringLiteral("/scaling_cur_freq")), khz)) {
+            add(QStringLiteral("cpu.frequency.") + policy.mid(6), QStringLiteral("CPU frequency ") + policy.mid(6), QStringLiteral("CPU"), khz / 1000000.0, QStringLiteral("GHz"), policies.filePath(policy + QStringLiteral("/scaling_cur_freq")));
+            if (!values.contains(QStringLiteral("cpu.frequency"))) add(QStringLiteral("cpu.frequency"), QStringLiteral("CPU frequency"), QStringLiteral("CPU"), khz / 1000000.0, QStringLiteral("GHz"), policies.filePath(policy + QStringLiteral("/scaling_cur_freq")));
+        }
+    }
+    QDir powercap(sysRoot_ + QStringLiteral("/class/powercap"));
+    double packagePower = 0.0;
+    qsizetype packageCount = 0, sampledPackages = 0;
+    QStringList packageSources;
+    for (const auto &dir : powercap.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const auto base = powercap.filePath(dir);
+        const auto file = base + QStringLiteral("/energy_uj");
+        const bool isPackage = readText(base + QStringLiteral("/name")).startsWith(QStringLiteral("package-"));
+        if (isPackage) ++packageCount;
+        bool ok = false;
+        const auto energy = readText(file).toULongLong(&ok);
+        if (!ok) continue;
+        add(QStringLiteral("cpu.energy.") + dir, displayName(dir) + QStringLiteral(" energy"), QStringLiteral("CPU"), static_cast<double>(energy) / 1000000.0, QStringLiteral("J"), file);
+        const auto key = QStringLiteral("energy.") + dir;
+        nextCounters.insert(key, {energy, now});
+        const auto previous = previousCounters_.constFind(key);
+        if (previous != previousCounters_.cend()) {
+            const double seconds = std::chrono::duration<double>(now - previous->at).count();
+            quint64 delta = 0;
+            bool valid = energy >= previous->value;
+            if (valid) delta = energy - previous->value;
+            else {
+                const auto range = readText(base + QStringLiteral("/max_energy_range_uj")).toULongLong(&ok);
+                if (ok && range > previous->value && range > energy) {
+                    delta = range - previous->value + energy;
+                    valid = true;
+                }
+            }
+            if (valid && seconds > 0.0) {
+                const double watts = static_cast<double>(delta) / 1000000.0 / seconds;
+                add(QStringLiteral("cpu.power.") + dir, displayName(dir) + QStringLiteral(" power"), QStringLiteral("CPU"), watts, QStringLiteral("W"), file);
+                if (isPackage) { packagePower += watts; ++sampledPackages; packageSources.append(file); }
+            }
+        }
+        double limit = 0;
+        const auto limitFile = base + QStringLiteral("/constraint_0_max_power_uw");
+        if (readNumber(limitFile, limit))
+            add(QStringLiteral("cpu.power.limit.") + dir, displayName(dir) + QStringLiteral(" power limit"), QStringLiteral("CPU"), limit / 1000000.0, QStringLiteral("W"), limitFile);
+    }
+    if (packageCount > 0 && packageCount == sampledPackages)
+        add(QStringLiteral("cpu.power"), QStringLiteral("CPU package power"), QStringLiteral("CPU"), packagePower, QStringLiteral("W"), packageSources.join(QStringLiteral("; ")));
+
+    // hwmon values are discovered dynamically. CPU temperature is recognized only for known CPU labels.
+    double cpuTemperature = -std::numeric_limits<double>::infinity();
+    QString cpuTemperatureSource;
+    {
+        QDir hwmon(sysRoot_ + QStringLiteral("/class/hwmon"));
+        for (const auto &dir : hwmon.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+            const QString base = hwmon.filePath(dir);
+            const auto canonical = QFileInfo(base).canonicalFilePath();
+            const QString identity = canonical.isEmpty() ? QDir::cleanPath(base) : canonical;
+            QString chip = readText(base + QStringLiteral("/name"));
+            if (chip.isEmpty()) chip = dir;
+            const auto entries = QDir(base).entryList(QDir::Files, QDir::Name);
+            for (const auto &entry : entries) {
+                static const QRegularExpression channel(QStringLiteral("^(temp|fan|in|power|energy)([0-9]+)_input$"));
+                const auto match = channel.match(entry);
+                if (!match.hasMatch()) continue;
+                double raw = 0;
+                const auto file = base + QLatin1Char('/') + entry;
+                if (!readNumber(file, raw)) continue;
+                const QString type = match.captured(1);
+                const QString number = match.captured(2);
+                const auto prefix = base + QLatin1Char('/') + type + number;
+                double flag = 0.0;
+                if (readNumber(prefix + QStringLiteral("_fault"), flag) && flag != 0.0) continue;
+                if (readNumber(prefix + QStringLiteral("_enable"), flag) && flag == 0.0) continue;
+                const QString label = readText(prefix + QStringLiteral("_label"));
+                const double value = type == QStringLiteral("temp") ? raw / 1000.0 : type == QStringLiteral("power") || type == QStringLiteral("energy") ? raw / 1000000.0 : type == QStringLiteral("in") ? raw / 1000.0 : raw;
+                const QString unit = type == QStringLiteral("temp") ? QStringLiteral("°C") : type == QStringLiteral("fan") ? QStringLiteral("RPM") : type == QStringLiteral("in") ? QStringLiteral("V") : type == QStringLiteral("energy") ? QStringLiteral("J") : QStringLiteral("W");
+                const QString group = type == QStringLiteral("temp") ? QStringLiteral("Temperature") : type == QStringLiteral("fan") ? QStringLiteral("Cooling") : type == QStringLiteral("in") ? QStringLiteral("Voltage") : QStringLiteral("Power");
+                const QString name = chip + QStringLiteral(" ") + (label.isEmpty() ? type + number : label);
+                add(QStringLiteral("hwmon.") + identity + QLatin1Char('.') + type + number, name, group, value, unit, file);
+                if (type == QStringLiteral("temp") && value > cpuTemperature &&
+                    (chip.contains(QStringLiteral("coretemp"), Qt::CaseInsensitive) || chip.contains(QStringLiteral("k10temp"), Qt::CaseInsensitive) || chip.contains(QStringLiteral("zenpower"), Qt::CaseInsensitive) || chip.contains(QStringLiteral("cpu_thermal"), Qt::CaseInsensitive) || chip.contains(QStringLiteral("x86_pkg_temp"), Qt::CaseInsensitive))) {
+                    cpuTemperature = value;
+                    cpuTemperatureSource = file;
+                }
+            }
+        }
+    }
+
+    if (std::isfinite(cpuTemperature))
+        add(QStringLiteral("cpu.temperature"), QStringLiteral("CPU temperature (hottest)"), QStringLiteral("CPU"), cpuTemperature, QStringLiteral("°C"), cpuTemperatureSource);
+
+    // Battery attributes use Linux power_supply values and retain each battery's identity.
+    QDir supplies(sysRoot_ + QStringLiteral("/class/power_supply"));
+    for (const auto &supply : supplies.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const auto base = supplies.filePath(supply);
+        const auto type = readText(base + QStringLiteral("/type"));
+        if (type != QStringLiteral("Battery")) continue;
+        for (const auto &field : {QStringLiteral("capacity"), QStringLiteral("voltage_now"), QStringLiteral("current_now"), QStringLiteral("power_now"), QStringLiteral("energy_now")}) {
+            double raw = 0;
+            const auto file = base + QLatin1Char('/') + field;
+            if (!readNumber(file, raw)) continue;
+            QString unit = field == QStringLiteral("capacity") ? QStringLiteral("%") : field == QStringLiteral("voltage_now") ? QStringLiteral("V") : field == QStringLiteral("current_now") ? QStringLiteral("A") : field == QStringLiteral("energy_now") ? QStringLiteral("Wh") : QStringLiteral("W");
+            double value = field == QStringLiteral("voltage_now") ? raw / 1000000.0 : field == QStringLiteral("current_now") ? raw / 1000000.0 : field == QStringLiteral("power_now") ? raw / 1000000.0 : field == QStringLiteral("energy_now") ? raw / 1000000.0 : raw;
+            const QString label = field == QStringLiteral("capacity") ? QStringLiteral("charge") : field;
+            add(QStringLiteral("battery.") + supply + QLatin1Char('.') + label, supply + QStringLiteral(" ") + displayName(label), QStringLiteral("Battery"), value, unit, file);
+        }
+    }
+
+    // Disk sectors and network byte counters are differenced against the prior call.
+    QFile diskstats(procRoot_ + QStringLiteral("/diskstats"));
+    if (diskstats.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        for (const auto &line : QString::fromUtf8(diskstats.readAll()).split(QLatin1Char('\n'))) {
+            const auto parts = fields(line);
+            if (parts.size() < 14) continue;
+            const auto device = parts.at(2);
+            if (device.startsWith(QStringLiteral("loop")) || device.startsWith(QStringLiteral("ram"))) continue;
+            bool readOk = false, writeOk = false;
+            const auto readSectors = parts.at(5).toULongLong(&readOk);
+            const auto writeSectors = parts.at(9).toULongLong(&writeOk);
+            if (!readOk || !writeOk) continue;
+            for (const auto &[suffix, counter] : {std::pair<QString, quint64>{QStringLiteral("read"), readSectors}, {QStringLiteral("write"), writeSectors}}) {
+                const QString key = QStringLiteral("disk.") + device + QLatin1Char('.') + suffix;
+                const QString rate = key + QStringLiteral(".rate");
+                const auto old = previousCounters_.constFind(key);
+                nextCounters.insert(key, {counter, now});
+                if (old == previousCounters_.cend() || counter < old->value) continue;
+                const double seconds = std::chrono::duration<double>(now - old->at).count();
+                if (seconds > 0.0)
+                    add(rate, device + QLatin1Char(' ') + suffix + QStringLiteral(" throughput"), QStringLiteral("Disk I/O"), static_cast<double>(counter - old->value) * 512.0 / 1024.0 / seconds, QStringLiteral("KiB/s"), procRoot_ + QStringLiteral("/diskstats"));
+            }
+        }
+    }
+    QDir net(sysRoot_ + QStringLiteral("/class/net"));
+    for (const auto &iface : net.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        if (iface == QStringLiteral("lo")) continue;
+        const auto base = net.filePath(iface + QStringLiteral("/statistics"));
+        for (const auto &direction : {QStringLiteral("rx"), QStringLiteral("tx")}) {
+            const auto file = base + QLatin1Char('/') + direction + QStringLiteral("_bytes");
+            bool ok = false;
+            const auto counter = readText(file).toULongLong(&ok);
+            if (!ok) continue;
+            const QString key = QStringLiteral("net.") + iface + QLatin1Char('.') + direction;
+            const auto old = previousCounters_.constFind(key);
+            nextCounters.insert(key, {counter, now});
+            if (old == previousCounters_.cend() || counter < old->value) continue;
+            const double seconds = std::chrono::duration<double>(now - old->at).count();
+            if (seconds > 0.0)
+                add(key + QStringLiteral(".rate"), iface + QLatin1Char(' ') + direction + QStringLiteral(" throughput"), QStringLiteral("Network"), static_cast<double>(counter - old->value) / 1024.0 / seconds, QStringLiteral("KiB/s"), file);
+        }
+    }
+
+    // Optional DRM sysfs counters expose utilization and memory when the driver publishes them.
+    QDir drm(sysRoot_ + QStringLiteral("/class/drm"));
+    for (const auto &card : drm.entryList(QStringList{QStringLiteral("card[0-9]*")}, QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const auto base = drm.filePath(card + QStringLiteral("/device"));
+        double busy = 0;
+        if (readNumber(base + QStringLiteral("/gpu_busy_percent"), busy)) add(QStringLiteral("gpu.") + card + QStringLiteral(".usage"), card + QStringLiteral(" utilization"), QStringLiteral("GPU"), busy, QStringLiteral("%"), base + QStringLiteral("/gpu_busy_percent"));
+        double total = 0, used = 0;
+        if (readNumber(base + QStringLiteral("/mem_info_vram_total"), total) && readNumber(base + QStringLiteral("/mem_info_vram_used"), used) && total > 0) {
+            add(QStringLiteral("gpu.") + card + QStringLiteral(".vram_used"), card + QStringLiteral(" VRAM used"), QStringLiteral("GPU memory"), used / kGiB, QStringLiteral("GiB"), base + QStringLiteral("/mem_info_vram_used"));
+            add(QStringLiteral("gpu.") + card + QStringLiteral(".vram_total"), card + QStringLiteral(" VRAM total"), QStringLiteral("GPU memory"), total / kGiB, QStringLiteral("GiB"), base + QStringLiteral("/mem_info_vram_total"));
+        }
+    }
+
+    QFile thermal(sysRoot_ + QStringLiteral("/devices/system/cpu/thermal_throttle/package_throttle_count"));
+    double throttle = 0;
+    if (readNumber(thermal.fileName(), throttle)) add(QStringLiteral("cpu.thermal_throttle.package"), QStringLiteral("CPU package thermal throttle count"), QStringLiteral("CPU"), throttle, QStringLiteral("count"), thermal.fileName());
+    for (const auto &core : QDir(sysRoot_ + QStringLiteral("/devices/system/cpu")).entryList(QStringList{QStringLiteral("cpu[0-9]*")}, QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const auto file = sysRoot_ + QStringLiteral("/devices/system/cpu/") + core + QStringLiteral("/thermal_throttle/core_throttle_count");
+        if (readNumber(file, throttle)) add(QStringLiteral("cpu.thermal_throttle.") + core, core + QStringLiteral(" thermal throttle count"), QStringLiteral("CPU"), throttle, QStringLiteral("count"), file);
+    }
+    previousCpuTimes_ = std::move(nextCpuTimes);
+    previousCounters_ = std::move(nextCounters);
+    return snapshot;
+}
+
+} // namespace neko
