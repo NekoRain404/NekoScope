@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.nekoscope.NekoScope</id>
+  <name>NekoScope</name>
+  <summary>Inspect Linux hardware, monitor sensors and run diagnostics</summary>
+  <summary xml:lang="zh_CN">查看 Linux 硬件信息、监测传感器并运行诊断</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <description>
+    <p>NekoScope reads real hardware information from procfs, sysfs and kernel interfaces. It presents CPU, memory, firmware, storage, PCI, USB, network, display, audio, battery and power details with per-field provenance and read status.</p>
+    <p>Sensors update asynchronously with bounded history. Optional stress and benchmark workflows use separately detected external tools and never fabricate success results. Reports can be exported as JSON, HTML, CSV or Markdown with privacy redaction enabled by default.</p>
+  </description>
+  <launchable type="desktop-id">io.nekoscope.NekoScope.desktop</launchable>
+  <categories>
+    <category>System</category>
+    <category>Monitor</category>
+  </categories>
+  <provides>
+    <binary>nekoscope</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+</component>

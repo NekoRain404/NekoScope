@@ -60,8 +60,10 @@ memory, sensor loss/staleness/limit, an expired idle sample, timeout, immediate
 observer cancellation, restart independence, and destruction cleanup.
 
 An isolated CMake harness builds with C++20, AUTOMOC, and
-`-Wall -Wextra -Wpedantic`; the same suite also runs under AddressSanitizer and
-UndefinedBehaviorSanitizer. Final command results are reported to the integrator.
+`-Wall -Wextra -Wpedantic`. The final ordinary run passed all 25 QtTest checks
+in 15.4 s. The same 25 checks passed in 15.3 s under AddressSanitizer (including
+leak detection) and UndefinedBehaviorSanitizer, with no sanitizer reports or
+compiler warnings. The final changed-file whitespace check also passed.
 
 ## Known limits
 

@@ -47,6 +47,7 @@ if(NEKOSCOPE_BUILD_GUI)
         QML_FILES ${NEKO_QML})
     install(TARGETS nekoscope RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(FILES packaging/linux/io.nekoscope.NekoScope.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES packaging/linux/io.nekoscope.NekoScope.metainfo.xml DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
     install(FILES public/favicon.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps RENAME io.nekoscope.NekoScope.svg)
 endif()
 

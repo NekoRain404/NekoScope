@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native build and tests (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build qt6-base-dev qt6-declarative-dev \
+            qt6-tools-dev libgl1-mesa-dev libvulkan-dev
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DNEKOSCOPE_BUILD_GUI=ON -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: GUI smoke test (offscreen)
+        run: QT_QPA_PLATFORM=offscreen ./build/nekoscope --smoke-test --software
+
+  native-container:
+    name: Native build and tests (${{ matrix.distro }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: fedora-42
+            container: fedora:42
+          - distro: arch
+            container: archlinux:base-devel
+          - distro: opensuse-tumbleweed
+            container: opensuse/tumbleweed:latest
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.container }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies (Fedora)
+        if: startsWith(matrix.distro, 'fedora')
+        run: dnf install -y cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qttools-devel mesa-libGL-devel vulkan-loader-devel
+      - name: Install dependencies (Arch)
+        if: matrix.distro == 'arch'
+        run: pacman -Syu --noconfirm --needed cmake ninja gcc qt6-base qt6-declarative qt6-tools mesa vulkan-headers
+      - name: Install dependencies (openSUSE)
+        if: startsWith(matrix.distro, 'opensuse')
+        run: zypper --non-interactive install cmake ninja gcc-c++ qt6-base-devel qt6-declarative-devel qt6-tools-devel Mesa-libGL-devel vulkan-devel
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DNEKOSCOPE_BUILD_GUI=ON -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  prototype:
+    name: H5 prototype (Playwright)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+      - run: npm run build

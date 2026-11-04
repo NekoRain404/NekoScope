@@ -110,13 +110,18 @@ int main(int argc, char *argv[])
     if (engine.rootObjects().isEmpty()) return 2;
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
     if (!window) { qCritical("Main.qml must create an ApplicationWindow"); return 2; }
-    QObject::connect(window, &QQuickWindow::sceneGraphInitialized, &hardware, [window, &hardware] {
+    const auto publishRenderer = [window, &hardware] {
         const auto name = graphicsName(window->rendererInterface()->graphicsApi());
         QMetaObject::invokeMethod(&hardware, [&hardware, name] {
             hardware.setRenderBackend(name);
             qInfo().noquote() << "Qt Quick renderer:" << name;
         }, Qt::QueuedConnection);
-    }, Qt::DirectConnection);
+    };
+    QObject::connect(window, &QQuickWindow::sceneGraphInitialized, &hardware,
+                     publishRenderer, Qt::DirectConnection);
+    // Some platforms initialise the scene graph during engine.load(); in that
+    // case the signal has already fired and the backend would stay pending.
+    if (window->isSceneGraphInitialized()) publishRenderer();
     hardware.refresh();
     QTimer sampling;
     sampling.setInterval(1000);
@@ -128,6 +133,7 @@ int main(int argc, char *argv[])
     if (smoke || !snapshotPath.isEmpty()) {
         auto tick = std::make_shared<int>(0);
         auto step = std::make_shared<int>(0);
+        auto settle = std::make_shared<int>(0);
         auto verification = std::make_unique<QTimer>();
         verification->setInterval(200);
         QTimer *timer = verification.get();
@@ -153,6 +159,13 @@ int main(int argc, char *argv[])
                 if (smoke && *step == 28) {
                     QMetaObject::invokeMethod(window, "navigateTo", Q_ARG(QVariant, 0));
                     ++*step;
+                    *settle = 0;
+                    return;
+                }
+                // Let the page transition settle before grabbing the frame;
+                // otherwise the snapshot can capture a fully transparent page.
+                if (*settle < 3) {
+                    ++*settle;
                     return;
                 }
                 QDir().mkpath(QFileInfo(snapshotPath).absolutePath());
