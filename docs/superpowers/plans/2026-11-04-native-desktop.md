@@ -74,10 +74,10 @@
 
 ### Task 6: Cross-review and incremental coverage
 
-- [ ] Review each owned area for spec compliance and code quality; fix critical findings before committing integrated milestones.
-- [ ] Verify tests, GUI navigation/themes/languages, report exports, settings persistence, subprocess cleanup and sanitizers.
-- [ ] Record verified capabilities, remaining HWINFO/AIDA64 coverage gaps, unresolved distribution checks and future module candidates in `docs/development/progress.md`.
-- [ ] Continue expanding the original product goal; a first successful native build is a milestone, not full completion.
+- [x] Review each owned area for spec compliance and code quality; fix critical findings before committing integrated milestones.
+- [x] Verify tests, GUI navigation/themes/languages, report exports, settings persistence, subprocess cleanup and sanitizers.
+- [x] Record verified capabilities, remaining HWINFO/AIDA64 coverage gaps, unresolved distribution checks and future module candidates in `docs/development/progress.md`.
+- [x] Continue expanding the original product goal; a first successful native build is a milestone, not full completion.
 
 
 ## Phase 2 — Product polish and depth
