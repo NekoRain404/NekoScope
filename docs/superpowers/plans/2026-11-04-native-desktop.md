@@ -90,32 +90,32 @@ documented Rust boundary, and distribution validation.
 
 ### Task 7: Apple-grade frontend polish
 
-- [ ] Introduce design tokens in `Theme.qml`: type scale, spacing scale, radii, elevation, motion durations and easing curves.
-- [ ] Refine sidebar, header, cards, tables, chips, segmented controls and form fields with consistent hover, press, focus-visible and disabled states.
-- [ ] Add restrained page transitions, nav indicator motion, chart draw-in and status pulses; all animation must honor `reducedMotion`.
-- [ ] Improve typography hierarchy, whitespace, empty/error states and responsive behavior down to 1000 px minimum width.
-- [ ] Keep every existing objectName and the `currentPage` / `navigateTo(index)` contract intact.
-- [ ] Verify with `qmllint`, offscreen `--smoke-test` and a captured screenshot; zero QML warnings.
+- [x] Introduce design tokens in `Theme.qml`: type scale, spacing scale, radii, elevation, motion durations and easing curves.
+- [x] Refine sidebar, header, cards, tables, chips, segmented controls and form fields with consistent hover, press, focus-visible and disabled states.
+- [x] Add restrained page transitions, nav indicator motion, chart draw-in and status pulses; all animation must honor `reducedMotion`.
+- [x] Improve typography hierarchy, whitespace, empty/error states and responsive behavior down to 1000 px minimum width.
+- [x] Keep every existing objectName and the `currentPage` / `navigateTo(index)` contract intact.
+- [x] Verify with `qmllint`, offscreen `--smoke-test` and a captured screenshot; zero QML warnings.
 
 ### Task 8: Inventory depth toward AIDA64/HWiNFO coverage
 
-- [ ] Add GPU detail from DRM/sysfs: vendor/device IDs, driver, PCI link, amdgpu/i915 memory, busy, clock, temperature and power where readable.
-- [ ] Add NVMe controller/namespace detail: model, firmware, serial (sensitive), transport, namespace size, temperature; SMART remains explicitly unavailable without a backend.
-- [ ] Add battery health: design/full energy, cycle count, status, power, voltage; compute health only from valid values.
-- [ ] Add Wi-Fi link quality from `/proc/net/wireless` and interface capability detection; MAC/addresses remain sensitive.
-- [ ] Extend USB topology and PCI metadata; keep per-field source, status, unit and provenance.
-- [ ] Add deterministic fixture tests for every new parser; no fabricated values and no privileged commands.
+- [x] Add GPU detail from DRM/sysfs: vendor/device IDs, driver, PCI link, amdgpu/i915 memory, busy, clock, temperature and power where readable.
+- [x] Add NVMe controller/namespace detail: model, firmware, serial (sensitive), transport, namespace size, temperature; SMART remains explicitly unavailable without a backend.
+- [x] Add battery health: design/full energy, cycle count, status, power, voltage; compute health only from valid values.
+- [x] Add Wi-Fi link quality from `/proc/net/wireless` and interface capability detection; MAC/addresses remain sensitive.
+- [x] Extend USB topology and PCI metadata; keep per-field source, status, unit and provenance.
+- [x] Add deterministic fixture tests for every new parser; no fabricated values and no privileged commands.
 
 ### Task 9: Benchmark persistence and broad report formats
 
-- [ ] Persist bounded benchmark history to a JSON file under the app config location with an injectable path for tests; load on construction and save atomically.
-- [ ] Add Markdown report output alongside JSON/HTML/CSV with escaped table cells and the same privacy filtering.
-- [ ] Expose the supported format list from `ReportService` so QML does not hard-code formats.
-- [ ] Extend tests for persistence, corruption tolerance, redaction and Markdown escaping.
+- [x] Persist bounded benchmark history to a JSON file under the app config location with an injectable path for tests; load on construction and save atomically.
+- [x] Add Markdown report output alongside JSON/HTML/CSV with escaped table cells and the same privacy filtering.
+- [x] Expose the supported format list from `ReportService` so QML does not hard-code formats.
+- [x] Extend tests for persistence, corruption tolerance, redaction and Markdown escaping.
 
 ### Task 10: Documentation, CI matrix, packaging and Rust boundary
 
-- [ ] Write `docs/development/progress.md` recording verified capabilities, coverage gaps and the next milestones.
-- [ ] Write `docs/development/rust-boundary.md` as a decision record: evaluated candidates, selection criteria, and the first justified module (privileged read-only helper or binary parser) with its C ABI/process contract.
-- [ ] Add a CI workflow covering CMake configure/build/CTest and Playwright prototype tests on Ubuntu, Fedora and Arch containers where practical; distinguish written CI from observed runs.
-- [ ] Update packaging metadata and README with runtime dependencies, optional tools and install instructions.
+- [x] Write `docs/development/progress.md` recording verified capabilities, coverage gaps and the next milestones.
+- [x] Write `docs/development/rust-boundary.md` as a decision record: evaluated candidates, selection criteria, and the first justified module (privileged read-only helper or binary parser) with its C ABI/process contract.
+- [x] Add a CI workflow covering CMake configure/build/CTest and Playwright prototype tests on Ubuntu, Fedora and Arch containers where practical; distinguish written CI from observed runs.
+- [x] Update packaging metadata and README with runtime dependencies, optional tools and install instructions.

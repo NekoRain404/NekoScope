@@ -1,8 +1,10 @@
 # Development progress
 
 Date: 2026-11-04
-Phase 2 status: implementation complete, review and integration in progress
+Phase 2 status: implementation and task reviews complete; final whole-branch review pending
 Baseline commit: `7ff0b23` (native Qt Quick foundation)
+Integration commits: `fef5a71` (history + Markdown), `34be2d4` (inventory depth),
+`2188fa6` (QML polish), `02ca1f6` (docs/CI/packaging harden)
 Branch: `feat/native-desktop`
 
 ## Verified on this host
@@ -21,6 +23,8 @@ distributions or hardware.
 | Hardware snapshot | `./build-gui/nekoscope --dump-inventory` exits 0 and emits valid redacted JSON |
 | H5 prototype | `npm test` 12/12 Playwright tests pass; `npm run build` succeeds |
 | Sanitizers | Inventory and sensor suites previously passed isolated ASan/UBSan runs (see their reports) |
+| QML lint | `qmllint --unqualified disable native/qml/*.qml` exits 0 with no output |
+| Snapshot | `--snapshot` waits for the page transition; offscreen and XWayland images contain the real overview |
 
 ## Capability status
 
@@ -39,7 +43,7 @@ Delivered and verified against real interfaces:
 - ALSA audio cards and DRM displays/connectors.
 - Asynchronous sensors with bounded history, pause, reset, favorites and thermal freshness.
 - Stress/benchmark runs with capability discovery, bounded parameters, process-group cleanup and no fabricated scores.
-- JSON/HTML/CSV reports with redaction and category selection; Markdown is part of the Phase 2 change set pending final verification.
+- JSON/HTML/CSV/Markdown reports with redaction and category selection.
 - Chinese/English live switching; light/dark/system themes; accent and reduced motion.
 
 ## Known coverage gaps
