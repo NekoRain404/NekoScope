@@ -161,13 +161,28 @@ void Collector::appendPci(InventorySnapshot &snapshot)
             QStringLiteral("enable"), QStringLiteral("current_link_speed"),
             QStringLiteral("current_link_width"), QStringLiteral("max_link_speed"),
             QStringLiteral("max_link_width"), QStringLiteral("consistent_dma_mask_bits"),
-            QStringLiteral("dma_mask_bits"), QStringLiteral("modalias")});
+            QStringLiteral("dma_mask_bits"), QStringLiteral("power_state"),
+            QStringLiteral("d3cold_allowed"), QStringLiteral("label"), QStringLiteral("index"),
+            QStringLiteral("resource"), QStringLiteral("modalias")});
         const QString driver = QFileInfo(path + QStringLiteral("/driver")).symLinkTarget();
         fields.append(valueField(QStringLiteral("Driver"), driver.isEmpty() ? QString() : QFileInfo(driver).fileName(),
                                  path + QStringLiteral("/driver")));
         fields.append(valueField(QStringLiteral("IOMMU group"),
                                  QFileInfo(path + QStringLiteral("/iommu_group")).symLinkTarget(),
                                  path + QStringLiteral("/iommu_group")));
+        const QString msiPath = path + QStringLiteral("/msi_irqs");
+        const QStringList msiIrqs = QDir(msiPath).entryList(QDir::Files | QDir::System |
+                                                            QDir::NoDotAndDotDot, QDir::Name);
+        if (msiIrqs.isEmpty()) {
+            QVariantMap msi = field(QStringLiteral("MSI IRQs"), {{}, Unavailable}, msiPath);
+            msi.insert(QStringLiteral("reason"),
+                       QFileInfo(msiPath).exists() ? QStringLiteral("no MSI vectors exposed")
+                                                   : QStringLiteral("attribute is absent or empty"));
+            fields.append(msi);
+        } else {
+            fields.append(valueField(QStringLiteral("MSI IRQs"), msiIrqs.join(QStringLiteral(", ")),
+                                     msiPath));
+        }
         const QString vendor = readText(path + QStringLiteral("/vendor")).value;
         const QString product = readText(path + QStringLiteral("/device")).value;
         const QString vendorId = QStringLiteral("%1").arg(vendor.toUInt(nullptr, 0), 4, 16, QLatin1Char('0'));
@@ -192,6 +207,9 @@ void Collector::appendUsb(InventorySnapshot &snapshot)
     const QString root = pathFor(QStringLiteral("/sys/bus/usb/devices"));
     for (const QString &entry : QDir(root).entryList(QDir::Dirs | QDir::System | QDir::NoDotAndDotDot,
                                                      QDir::Name)) {
+        // Interface entries are folded into their parent device below.
+        if (entry.contains(QLatin1Char(':')))
+            continue;
         const QString path = root + QLatin1Char('/') + entry;
         const ReadResult vendor = readText(path + QStringLiteral("/idVendor"));
         const ReadResult product = readText(path + QStringLiteral("/idProduct"));
@@ -201,12 +219,65 @@ void Collector::appendUsb(InventorySnapshot &snapshot)
             QStringLiteral("idVendor"), QStringLiteral("idProduct"), QStringLiteral("manufacturer"),
             QStringLiteral("product"), QStringLiteral("bcdDevice"), QStringLiteral("bDeviceClass"),
             QStringLiteral("bDeviceSubClass"), QStringLiteral("bDeviceProtocol"),
-            QStringLiteral("bMaxPower"), QStringLiteral("speed"), QStringLiteral("busnum"),
-            QStringLiteral("devnum"), QStringLiteral("devpath"), QStringLiteral("version"),
-            QStringLiteral("serial")}, {QStringLiteral("serial")});
-        const QString name = readText(path + QStringLiteral("/product")).value;
-        snapshot.devices.append(device(QStringLiteral("usb:") + cleanId(entry), QStringLiteral("USB"), name,
-                                       QStringLiteral("%1:%2").arg(vendor.value, product.value), path, fields));
+            QStringLiteral("bMaxPower"), QStringLiteral("bMaxPacketSize0"),
+            QStringLiteral("speed"), QStringLiteral("busnum"), QStringLiteral("devnum"),
+            QStringLiteral("devpath"), QStringLiteral("version"), QStringLiteral("maxchild"),
+            QStringLiteral("bNumInterfaces"), QStringLiteral("bNumConfigurations"),
+            QStringLiteral("removable"), QStringLiteral("authorized"),
+            QStringLiteral("physical_location"), QStringLiteral("serial")},
+            {QStringLiteral("serial")});
+        for (QVariant &value : fields) {
+            QVariantMap item = value.toMap();
+            const QString key = item.value(QStringLiteral("key")).toString();
+            if (key == QStringLiteral("speed"))
+                item.insert(QStringLiteral("unit"), QStringLiteral("Mbps"));
+            else if (key == QStringLiteral("maxchild"))
+                item.insert(QStringLiteral("unit"), QStringLiteral("ports"));
+            else if (key == QStringLiteral("busnum") || key == QStringLiteral("devnum"))
+                item.insert(QStringLiteral("unit"), QStringLiteral("number"));
+            value = item;
+        }
+        const QString deviceDriverTarget = QFileInfo(path + QStringLiteral("/driver")).symLinkTarget();
+        fields.append(valueField(QStringLiteral("Driver"),
+                                 deviceDriverTarget.isEmpty()
+                                     ? QString()
+                                     : QFileInfo(deviceDriverTarget).fileName(),
+                                 path + QStringLiteral("/driver")));
+        int interfaceIndex = 0;
+        for (const QString &interfaceEntry : QDir(path).entryList({entry + QStringLiteral(":*")},
+                                                                  QDir::Dirs | QDir::System | QDir::NoDotAndDotDot,
+                                                                  QDir::Name)) {
+            const QString interfacePath = path + QLatin1Char('/') + interfaceEntry;
+            const QString prefix = QStringLiteral("Interface %1 ").arg(interfaceIndex++);
+            fields.append(textField(prefix + QStringLiteral("number"),
+                                    interfacePath + QStringLiteral("/bInterfaceNumber")));
+            fields.append(textField(prefix + QStringLiteral("class"),
+                                    interfacePath + QStringLiteral("/bInterfaceClass")));
+            fields.append(textField(prefix + QStringLiteral("subclass"),
+                                    interfacePath + QStringLiteral("/bInterfaceSubClass")));
+            fields.append(textField(prefix + QStringLiteral("protocol"),
+                                    interfacePath + QStringLiteral("/bInterfaceProtocol")));
+            fields.append(textField(prefix + QStringLiteral("endpoints"),
+                                    interfacePath + QStringLiteral("/bNumEndpoints")));
+            fields.append(textField(prefix + QStringLiteral("name"),
+                                    interfacePath + QStringLiteral("/interface")));
+            const QString interfaceDriverTarget = QFileInfo(interfacePath +
+                                                            QStringLiteral("/driver")).symLinkTarget();
+            fields.append(valueField(prefix + QStringLiteral("driver"),
+                                     interfaceDriverTarget.isEmpty()
+                                         ? QString()
+                                         : QFileInfo(interfaceDriverTarget).fileName(),
+                                     interfacePath + QStringLiteral("/driver")));
+        }
+        QString name = readText(path + QStringLiteral("/product")).value;
+        if (name.isEmpty())
+            name = readText(path + QStringLiteral("/manufacturer")).value;
+        if (name.isEmpty())
+            name = vendor.value + QLatin1Char(':') + product.value;
+        snapshot.devices.append(device(QStringLiteral("usb:") + cleanId(entry), QStringLiteral("USB"),
+                                       name,
+                                       QStringLiteral("%1:%2").arg(vendor.value, product.value),
+                                       path, fields));
     }
 }
 
@@ -239,6 +310,53 @@ void Collector::appendNetwork(InventorySnapshot &snapshot)
 void Collector::appendPower(InventorySnapshot &snapshot)
 {
     const QString root = pathFor(QStringLiteral("/sys/class/power_supply"));
+    struct UnitSpec {
+        double divisor;
+        int precision;
+        QString unit;
+        bool signedValue = false;
+    };
+    const QMap<QString, UnitSpec> specs{
+        {QStringLiteral("energy_now"), {1000000.0, 2, QStringLiteral("Wh")}},
+        {QStringLiteral("energy_full"), {1000000.0, 2, QStringLiteral("Wh")}},
+        {QStringLiteral("energy_full_design"), {1000000.0, 2, QStringLiteral("Wh")}},
+        {QStringLiteral("charge_now"), {1000000.0, 3, QStringLiteral("Ah")}},
+        {QStringLiteral("charge_full"), {1000000.0, 3, QStringLiteral("Ah")}},
+        {QStringLiteral("charge_full_design"), {1000000.0, 3, QStringLiteral("Ah")}},
+        {QStringLiteral("voltage_now"), {1000000.0, 3, QStringLiteral("V")}},
+        {QStringLiteral("voltage_min_design"), {1000000.0, 3, QStringLiteral("V")}},
+        {QStringLiteral("voltage_max_design"), {1000000.0, 3, QStringLiteral("V")}},
+        {QStringLiteral("current_now"), {1000000.0, 3, QStringLiteral("A"), true}},
+        {QStringLiteral("current_max"), {1000000.0, 3, QStringLiteral("A"), true}},
+        {QStringLiteral("power_now"), {1000000.0, 3, QStringLiteral("W"), true}},
+        {QStringLiteral("temp"), {10.0, 1, QStringLiteral("°C"), true}},
+        {QStringLiteral("capacity"), {1.0, -1, QStringLiteral("%")}},
+        {QStringLiteral("cycle_count"), {1.0, -1, QStringLiteral("count")}},
+    };
+    const auto annotate = [](QVariantMap item, const UnitSpec &spec) {
+        if (item.value(QStringLiteral("status")).toString() != Available)
+            return item;
+        static const QRegularExpression unsignedPattern(QStringLiteral("^[0-9]+$"));
+        static const QRegularExpression signedPattern(QStringLiteral("^-?[0-9]+$"));
+        const QString raw = item.value(QStringLiteral("value")).toString();
+        bool ok = false;
+        const qint64 value = raw.toLongLong(&ok);
+        if (!ok || !(spec.signedValue ? signedPattern : unsignedPattern).match(raw).hasMatch()) {
+            item.insert(QStringLiteral("value"), QString());
+            item.insert(QStringLiteral("status"), ReadError);
+            item.insert(QStringLiteral("reason"), QStringLiteral("malformed numeric value"));
+            return item;
+        }
+        const double scaled = static_cast<double>(value) / spec.divisor;
+        const bool integral = spec.precision < 0 && spec.divisor == 1.0;
+        item.insert(QStringLiteral("value"),
+                    integral ? QString::number(value)
+                             : QString::number(scaled, 'f', spec.precision));
+        item.insert(QStringLiteral("rawValue"),
+                    integral ? QVariant::fromValue<qint64>(value) : QVariant(scaled));
+        item.insert(QStringLiteral("unit"), spec.unit);
+        return item;
+    };
     for (const QString &entry : QDir(root).entryList(QDir::Dirs | QDir::System | QDir::NoDotAndDotDot,
                                                      QDir::Name)) {
         const QString path = root + QLatin1Char('/') + entry;
@@ -255,6 +373,45 @@ void Collector::appendPower(InventorySnapshot &snapshot)
             QStringLiteral("cycle_count"), QStringLiteral("temp"), QStringLiteral("manufacturer"),
             QStringLiteral("model_name"), QStringLiteral("technology"), QStringLiteral("serial_number")},
             {QStringLiteral("serial_number")});
+        for (QVariant &value : fields) {
+            const QVariantMap item = value.toMap();
+            const auto spec = specs.constFind(item.value(QStringLiteral("key")).toString());
+            if (spec != specs.cend())
+                value = annotate(item, *spec);
+        }
+        const auto numeric = [&fields](const QString &key, double &out) {
+            for (const QVariant &value : fields) {
+                const QVariantMap item = value.toMap();
+                if (item.value(QStringLiteral("key")).toString() != key)
+                    continue;
+                if (item.value(QStringLiteral("status")).toString() != Available)
+                    return false;
+                bool ok = false;
+                out = item.value(QStringLiteral("rawValue")).toDouble(&ok);
+                return ok;
+            }
+            return false;
+        };
+        double full = 0.0;
+        double design = 0.0;
+        QString family;
+        if (numeric(QStringLiteral("energy_full"), full) &&
+            numeric(QStringLiteral("energy_full_design"), design) && full > 0.0 && design > 0.0)
+            family = QStringLiteral("energy");
+        else if (numeric(QStringLiteral("charge_full"), full) &&
+                 numeric(QStringLiteral("charge_full_design"), design) && full > 0.0 && design > 0.0)
+            family = QStringLiteral("charge");
+        if (!family.isEmpty()) {
+            const double percent = full / design * 100.0;
+            QVariantMap health = field(QStringLiteral("Health percent"),
+                                       {QString::number(percent, 'f', 1), Available},
+                                       path + QLatin1Char('/') + family + QStringLiteral("_full; ") +
+                                           path + QLatin1Char('/') + family +
+                                           QStringLiteral("_full_design"));
+            health.insert(QStringLiteral("rawValue"), percent);
+            health.insert(QStringLiteral("unit"), QStringLiteral("%"));
+            fields.append(health);
+        }
         const QString name = readText(path + QStringLiteral("/model_name")).value;
         snapshot.devices.append(device(QStringLiteral("power:") + entry,
                                        type == QStringLiteral("Battery") ? QStringLiteral("电池") : QStringLiteral("电源"),

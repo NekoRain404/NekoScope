@@ -29,9 +29,12 @@ InventorySnapshot Collector::run()
     appendMemory(snapshot);
     appendDmi(snapshot);
     appendStorage(snapshot);
+    appendGpu(snapshot);
+    appendNvme(snapshot);
     appendPci(snapshot);
     appendUsb(snapshot);
     appendNetwork(snapshot);
+    appendWireless(snapshot);
     appendPower(snapshot);
     appendDisplays(snapshot);
     appendAudioCards(snapshot);

@@ -284,6 +284,350 @@ private slots:
                 QCOMPARE(value.toMap().value(QStringLiteral("collectedAt")).toString(), timestamp);
         }
     }
+
+    void gpuDetailReadsAmdgpuAndHwmon()
+    {
+        QTemporaryDir root;
+        const QString gpu = QStringLiteral("/sys/class/drm/card0/device");
+        writeFile(root, gpu + QStringLiteral("/vendor"), "0x1002\n");
+        writeFile(root, gpu + QStringLiteral("/device"), "0x73bf\n");
+        writeFile(root, gpu + QStringLiteral("/boot_vga"), "1\n");
+        writeFile(root, gpu + QStringLiteral("/current_link_speed"), "16.0 GT/s\n");
+        writeFile(root, gpu + QStringLiteral("/current_link_width"), "8\n");
+        writeFile(root, gpu + QStringLiteral("/max_link_speed"), "32.0 GT/s\n");
+        writeFile(root, gpu + QStringLiteral("/max_link_width"), "16\n");
+        writeFile(root, gpu + QStringLiteral("/uevent"),
+                  "DRIVER=amdgpu\nPCI_SLOT_NAME=0000:03:00.0\n");
+        writeFile(root, gpu + QStringLiteral("/mem_info_vram_total"), "17179869184\n");
+        writeFile(root, gpu + QStringLiteral("/mem_info_vram_used"), "2147483648\n");
+        writeFile(root, gpu + QStringLiteral("/gpu_busy_percent"), "42\n");
+        writeFile(root, gpu + QStringLiteral("/mem_busy_percent"), "7\n");
+        writeFile(root, gpu + QStringLiteral("/hwmon/hwmon0/temp1_input"), "45000\n");
+        writeFile(root, gpu + QStringLiteral("/hwmon/hwmon0/power1_average"), "125000000\n");
+        writeFile(root, gpu + QStringLiteral("/hwmon/hwmon0/fan1_input"), "1200\n");
+        QVERIFY(QDir().mkpath(root.path() + QStringLiteral("/sys/class/drm/card0-DP-1")));
+
+        const auto snapshot = fixture(root);
+        const auto gpuDevice = deviceById(snapshot, QStringLiteral("gpu:card0"));
+        QCOMPARE(gpuDevice.value(QStringLiteral("category")).toString(), QStringLiteral("显卡"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("Vendor ID")).value(QStringLiteral("value")).toString(), QStringLiteral("0x1002"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("PCI address")).value(QStringLiteral("value")).toString(), QStringLiteral("0000:03:00.0"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("Boot VGA")).value(QStringLiteral("value")).toString(), QStringLiteral("1"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("current_link_speed")).value(QStringLiteral("value")).toString(), QStringLiteral("16.0 GT/s"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("current_link_width")).value(QStringLiteral("value")).toString(), QStringLiteral("8"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("max_link_speed")).value(QStringLiteral("value")).toString(), QStringLiteral("32.0 GT/s"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("max_link_width")).value(QStringLiteral("value")).toString(), QStringLiteral("16"));
+        const auto vram = fieldByKey(gpuDevice, QStringLiteral("amdgpu VRAM total"));
+        QCOMPARE(vram.value(QStringLiteral("value")).toString(), QStringLiteral("16.00 GiB"));
+        QCOMPARE(vram.value(QStringLiteral("unit")).toString(), QStringLiteral("bytes"));
+        QCOMPARE(vram.value(QStringLiteral("rawValue")).toULongLong(), Q_UINT64_C(17179869184));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("amdgpu VRAM used")).value(QStringLiteral("value")).toString(), QStringLiteral("2.00 GiB"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("amdgpu GPU busy")).value(QStringLiteral("value")).toString(), QStringLiteral("42"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("amdgpu memory busy")).value(QStringLiteral("value")).toString(), QStringLiteral("7"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("Temperature")).value(QStringLiteral("value")).toString(), QStringLiteral("45.0"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("Temperature")).value(QStringLiteral("unit")).toString(), QStringLiteral("°C"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("Power")).value(QStringLiteral("value")).toString(), QStringLiteral("125.00"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("Power")).value(QStringLiteral("unit")).toString(), QStringLiteral("W"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("Fan")).value(QStringLiteral("value")).toString(), QStringLiteral("1200"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("i915 current frequency")).value(QStringLiteral("status")).toString(), QStringLiteral("unavailable"));
+        QVERIFY(!fieldByKey(gpuDevice, QStringLiteral("i915 current frequency")).value(QStringLiteral("reason")).toString().isEmpty());
+        QVERIFY(deviceById(snapshot, QStringLiteral("gpu:card0-DP-1")).isEmpty());
+    }
+
+    void gpuMalformedAndMissingValuesAreNotZero()
+    {
+        QTemporaryDir root;
+        const QString gpu = QStringLiteral("/sys/class/drm/card0/device");
+        writeFile(root, gpu + QStringLiteral("/mem_info_vram_total"), "garbage\n");
+        writeFile(root, gpu + QStringLiteral("/gpu_busy_percent"), "\n");
+        const auto gpuDevice = deviceById(fixture(root), QStringLiteral("gpu:card0"));
+        const auto malformed = fieldByKey(gpuDevice, QStringLiteral("amdgpu VRAM total"));
+        QCOMPARE(malformed.value(QStringLiteral("status")).toString(), QStringLiteral("read-error"));
+        QCOMPARE(malformed.value(QStringLiteral("value")).toString(), QString());
+        QVERIFY(!malformed.value(QStringLiteral("reason")).toString().isEmpty());
+        const auto absent = fieldByKey(gpuDevice, QStringLiteral("amdgpu GPU busy"));
+        QCOMPARE(absent.value(QStringLiteral("status")).toString(), QStringLiteral("unavailable"));
+        QCOMPARE(absent.value(QStringLiteral("value")).toString(), QString());
+        QVERIFY(!absent.value(QStringLiteral("reason")).toString().isEmpty());
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("amdgpu VRAM used")).value(QStringLiteral("status")).toString(), QStringLiteral("unavailable"));
+        QCOMPARE(fieldByKey(gpuDevice, QStringLiteral("Temperature")).value(QStringLiteral("status")).toString(), QStringLiteral("unavailable"));
+        QVERIFY(!fieldByKey(gpuDevice, QStringLiteral("Temperature")).value(QStringLiteral("reason")).toString().isEmpty());
+    }
+
+    void nvmeIdentityNamespaceAndTemperature()
+    {
+        QTemporaryDir root;
+        const QString base = QStringLiteral("/sys/class/nvme/nvme0");
+        writeFile(root, base + QStringLiteral("/model"), "Fixture NVMe\n");
+        writeFile(root, base + QStringLiteral("/firmware_rev"), "FW1.2\n");
+        writeFile(root, base + QStringLiteral("/serial"), "SN-PRIVATE\n");
+        writeFile(root, base + QStringLiteral("/transport"), "pcie\n");
+        writeFile(root, base + QStringLiteral("/address"), "0000:55:00.0\n");
+        writeFile(root, base + QStringLiteral("/state"), "live\n");
+        writeFile(root, base + QStringLiteral("/cntrltype"), "io\n");
+        writeFile(root, base + QStringLiteral("/queue_count"), "8\n");
+        writeFile(root, base + QStringLiteral("/hwmon0/temp1_input"), "38000\n");
+        writeFile(root, base + QStringLiteral("/nvme0n1/size"), "2000409\n");
+        writeFile(root, base + QStringLiteral("/nvme0n1/queue/logical_block_size"), "512\n");
+        writeFile(root, base + QStringLiteral("/nvme0n1/wwid"), "eui.1234\n");
+        const auto nvme = deviceById(fixture(root), QStringLiteral("nvme:nvme0"));
+        QCOMPARE(nvme.value(QStringLiteral("category")).toString(), QStringLiteral("存储"));
+        QCOMPARE(nvme.value(QStringLiteral("name")).toString(), QStringLiteral("Fixture NVMe"));
+        QCOMPARE(fieldByKey(nvme, QStringLiteral("Controller state")).value(QStringLiteral("value")).toString(), QStringLiteral("live"));
+        const auto serial = fieldByKey(nvme, QStringLiteral("Serial"));
+        QVERIFY(serial.value(QStringLiteral("sensitive")).toBool());
+        QCOMPARE(serial.value(QStringLiteral("value")).toString(), QStringLiteral("SN-PRIVATE"));
+        QCOMPARE(fieldByKey(nvme, QStringLiteral("Namespace 1 sectors")).value(QStringLiteral("value")).toString(), QStringLiteral("2000409"));
+        QCOMPARE(fieldByKey(nvme, QStringLiteral("Namespace 1 sectors")).value(QStringLiteral("unit")).toString(), QStringLiteral("sectors"));
+        const auto size = fieldByKey(nvme, QStringLiteral("Namespace 1 size"));
+        QCOMPARE(size.value(QStringLiteral("value")).toString(), QStringLiteral("976.76 MiB"));
+        QCOMPARE(size.value(QStringLiteral("rawValue")).toULongLong(), Q_UINT64_C(1024209408));
+        QCOMPARE(fieldByKey(nvme, QStringLiteral("Namespace 1 block size")).value(QStringLiteral("value")).toString(), QStringLiteral("512"));
+        QCOMPARE(fieldByKey(nvme, QStringLiteral("Temperature")).value(QStringLiteral("value")).toString(), QStringLiteral("38.0"));
+        QCOMPARE(fieldByKey(nvme, QStringLiteral("SMART / health")).value(QStringLiteral("status")).toString(), QStringLiteral("unavailable"));
+        QVERIFY(!fieldByKey(nvme, QStringLiteral("SMART / health")).value(QStringLiteral("reason")).toString().isEmpty());
+    }
+
+    void nvmeMalformedNamespaceSizeIsReadError()
+    {
+        QTemporaryDir root;
+        writeFile(root, QStringLiteral("/sys/class/nvme/nvme0/nvme0n1/size"), "not-a-number\n");
+        const auto nvme = deviceById(fixture(root), QStringLiteral("nvme:nvme0"));
+        const auto sectors = fieldByKey(nvme, QStringLiteral("Namespace 1 sectors"));
+        QCOMPARE(sectors.value(QStringLiteral("status")).toString(), QStringLiteral("read-error"));
+        QCOMPARE(sectors.value(QStringLiteral("value")).toString(), QString());
+        QVERIFY(!sectors.value(QStringLiteral("reason")).toString().isEmpty());
+        const auto size = fieldByKey(nvme, QStringLiteral("Namespace 1 size"));
+        QCOMPARE(size.value(QStringLiteral("status")).toString(), QStringLiteral("read-error"));
+        QCOMPARE(size.value(QStringLiteral("value")).toString(), QString());
+        QCOMPARE(fieldByKey(nvme, QStringLiteral("SMART / health")).value(QStringLiteral("status")).toString(), QStringLiteral("unavailable"));
+    }
+
+    void batteryHealthRequiresMatchingNonZeroValues()
+    {
+        QTemporaryDir root;
+        const QString base = QStringLiteral("/sys/class/power_supply/BAT0");
+        writeFile(root, base + QStringLiteral("/type"), "Battery\n");
+        writeFile(root, base + QStringLiteral("/energy_full"), "50000000\n");
+        writeFile(root, base + QStringLiteral("/energy_full_design"), "60000000\n");
+        writeFile(root, base + QStringLiteral("/cycle_count"), "42\n");
+        writeFile(root, base + QStringLiteral("/capacity"), "80\n");
+        writeFile(root, base + QStringLiteral("/status"), "Discharging\n");
+        writeFile(root, base + QStringLiteral("/power_now"), "12000000\n");
+        writeFile(root, base + QStringLiteral("/voltage_now"), "11000000\n");
+        writeFile(root, base + QStringLiteral("/voltage_min_design"), "10000000\n");
+        const auto battery = deviceById(fixture(root), QStringLiteral("power:BAT0"));
+        QCOMPARE(battery.value(QStringLiteral("category")).toString(), QStringLiteral("电池"));
+        const auto health = fieldByKey(battery, QStringLiteral("Health percent"));
+        QCOMPARE(health.value(QStringLiteral("status")).toString(), QStringLiteral("available"));
+        QCOMPARE(health.value(QStringLiteral("value")).toString(), QStringLiteral("83.3"));
+        QCOMPARE(health.value(QStringLiteral("unit")).toString(), QStringLiteral("%"));
+        const double percent = health.value(QStringLiteral("rawValue")).toDouble();
+        QVERIFY(percent > 83.3 && percent < 83.4);
+        const auto energy = fieldByKey(battery, QStringLiteral("energy_full"));
+        QCOMPARE(energy.value(QStringLiteral("value")).toString(), QStringLiteral("50.00"));
+        QCOMPARE(energy.value(QStringLiteral("unit")).toString(), QStringLiteral("Wh"));
+        QCOMPARE(fieldByKey(battery, QStringLiteral("power_now")).value(QStringLiteral("value")).toString(), QStringLiteral("12.000"));
+        QCOMPARE(fieldByKey(battery, QStringLiteral("voltage_now")).value(QStringLiteral("value")).toString(), QStringLiteral("11.000"));
+        QCOMPARE(fieldByKey(battery, QStringLiteral("cycle_count")).value(QStringLiteral("value")).toString(), QStringLiteral("42"));
+        QCOMPARE(fieldByKey(battery, QStringLiteral("capacity")).value(QStringLiteral("value")).toString(), QStringLiteral("80"));
+    }
+
+    void batteryHealthRejectsZeroMismatchedAndMalformedData()
+    {
+        QTemporaryDir root;
+        const QString zero = QStringLiteral("/sys/class/power_supply/BAT0");
+        writeFile(root, zero + QStringLiteral("/type"), "Battery\n");
+        writeFile(root, zero + QStringLiteral("/energy_full"), "50000000\n");
+        writeFile(root, zero + QStringLiteral("/energy_full_design"), "0\n");
+        writeFile(root, zero + QStringLiteral("/charge_full"), "2000000\n");
+        writeFile(root, zero + QStringLiteral("/charge_full_design"), "2500000\n");
+        const QString mismatch = QStringLiteral("/sys/class/power_supply/BAT1");
+        writeFile(root, mismatch + QStringLiteral("/type"), "Battery\n");
+        writeFile(root, mismatch + QStringLiteral("/energy_full"), "50000000\n");
+        writeFile(root, mismatch + QStringLiteral("/charge_full_design"), "2500000\n");
+        const QString malformed = QStringLiteral("/sys/class/power_supply/BAT2");
+        writeFile(root, malformed + QStringLiteral("/type"), "Battery\n");
+        writeFile(root, malformed + QStringLiteral("/energy_full"), "garbage\n");
+        writeFile(root, malformed + QStringLiteral("/energy_full_design"), "60000000\n");
+        const auto snapshot = fixture(root);
+        const auto zeroBattery = deviceById(snapshot, QStringLiteral("power:BAT0"));
+        QCOMPARE(fieldByKey(zeroBattery, QStringLiteral("Health percent")).value(QStringLiteral("value")).toString(), QStringLiteral("80.0"));
+        QVERIFY(fieldByKey(deviceById(snapshot, QStringLiteral("power:BAT1")), QStringLiteral("Health percent")).isEmpty());
+        const auto malformedBattery = deviceById(snapshot, QStringLiteral("power:BAT2"));
+        QVERIFY(fieldByKey(malformedBattery, QStringLiteral("Health percent")).isEmpty());
+        QCOMPARE(fieldByKey(malformedBattery, QStringLiteral("energy_full")).value(QStringLiteral("status")).toString(), QStringLiteral("read-error"));
+    }
+
+    void wirelessLinkQualityParsesProcNetWireless()
+    {
+        QTemporaryDir root;
+        QVERIFY(QDir().mkpath(root.path() + QStringLiteral("/sys/class/net/wlan0/wireless")));
+        writeFile(root, QStringLiteral("/sys/class/net/wlan0/address"), "aa:bb:cc:dd:ee:ff\n");
+        QVERIFY(QDir().mkpath(root.path() + QStringLiteral("/sys/class/net/eth0")));
+        writeFile(root, QStringLiteral("/proc/net/wireless"),
+                  "Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE\n"
+                  " face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22\n"
+                  "wlan0: 0000   67.  -52.  -90.        0      0      0      0      0        0        0\n");
+        const auto snapshot = fixture(root);
+        const auto wifi = deviceById(snapshot, QStringLiteral("wifi:wlan0"));
+        QCOMPARE(wifi.value(QStringLiteral("category")).toString(), QStringLiteral("网络"));
+        const auto mac = fieldByKey(wifi, QStringLiteral("MAC address"));
+        QVERIFY(mac.value(QStringLiteral("sensitive")).toBool());
+        QCOMPARE(mac.value(QStringLiteral("value")).toString(), QStringLiteral("aa:bb:cc:dd:ee:ff"));
+        QCOMPARE(fieldByKey(wifi, QStringLiteral("Link quality")).value(QStringLiteral("value")).toString(), QStringLiteral("67"));
+        QCOMPARE(fieldByKey(wifi, QStringLiteral("Signal level")).value(QStringLiteral("value")).toString(), QStringLiteral("-52"));
+        QCOMPARE(fieldByKey(wifi, QStringLiteral("Signal level")).value(QStringLiteral("unit")).toString(), QStringLiteral("dBm"));
+        QCOMPARE(fieldByKey(wifi, QStringLiteral("Noise level")).value(QStringLiteral("value")).toString(), QStringLiteral("-90"));
+        QVERIFY(deviceById(snapshot, QStringLiteral("wifi:eth0")).isEmpty());
+    }
+
+    void wirelessWithoutStatisticsAndSentinelValuesDoNotInventReadings()
+    {
+        QTemporaryDir root;
+        QVERIFY(QDir().mkpath(root.path() + QStringLiteral("/sys/class/net/wlan0/wireless")));
+        writeFile(root, QStringLiteral("/sys/class/net/wlan0/address"), "aa:bb:cc:dd:ee:ff\n");
+        const auto missing = deviceById(fixture(root), QStringLiteral("wifi:wlan0"));
+        for (const QString &key : {QStringLiteral("Link quality"), QStringLiteral("Signal level"),
+                                   QStringLiteral("Noise level")}) {
+            const auto field = fieldByKey(missing, key);
+            QCOMPARE(field.value(QStringLiteral("status")).toString(), QStringLiteral("unavailable"));
+            QCOMPARE(field.value(QStringLiteral("value")).toString(), QString());
+            QVERIFY(!field.value(QStringLiteral("reason")).toString().isEmpty());
+        }
+        writeFile(root, QStringLiteral("/proc/net/wireless"),
+                  "wlan0: 0000   70.  -40.  -256.        0      0      0      0      0        0        0\n");
+        const auto sentinel = deviceById(fixture(root), QStringLiteral("wifi:wlan0"));
+        QCOMPARE(fieldByKey(sentinel, QStringLiteral("Signal level")).value(QStringLiteral("value")).toString(), QStringLiteral("-40"));
+        const auto noise = fieldByKey(sentinel, QStringLiteral("Noise level"));
+        QCOMPARE(noise.value(QStringLiteral("status")).toString(), QStringLiteral("unavailable"));
+        QCOMPARE(noise.value(QStringLiteral("value")).toString(), QString());
+        QVERIFY(noise.value(QStringLiteral("reason")).toString().contains(QStringLiteral("sentinel")));
+    }
+
+    void usbTopologyIncludesInterfacesAndSensitiveSerial()
+    {
+        QTemporaryDir root;
+        const QString base = QStringLiteral("/sys/bus/usb/devices/3-5");
+        writeFile(root, base + QStringLiteral("/idVendor"), "3277\n");
+        writeFile(root, base + QStringLiteral("/idProduct"), "0059\n");
+        writeFile(root, base + QStringLiteral("/manufacturer"), "Shinetech\n");
+        writeFile(root, base + QStringLiteral("/product"), "ASUS FHD webcam\n");
+        writeFile(root, base + QStringLiteral("/serial"), "200901010001\n");
+        writeFile(root, base + QStringLiteral("/speed"), "480\n");
+        writeFile(root, base + QStringLiteral("/version"), " 2.01\n");
+        writeFile(root, base + QStringLiteral("/maxchild"), "0\n");
+        writeFile(root, base + QStringLiteral("/busnum"), "3\n");
+        writeFile(root, base + QStringLiteral("/devnum"), "2\n");
+        writeFile(root, base + QStringLiteral("/bNumInterfaces"), " 1\n");
+        const QString interface = base + QStringLiteral("/3-5:1.0");
+        writeFile(root, interface + QStringLiteral("/bInterfaceNumber"), "00\n");
+        writeFile(root, interface + QStringLiteral("/bInterfaceClass"), "0e\n");
+        writeFile(root, interface + QStringLiteral("/bInterfaceSubClass"), "01\n");
+        writeFile(root, interface + QStringLiteral("/bInterfaceProtocol"), "00\n");
+        writeFile(root, interface + QStringLiteral("/bNumEndpoints"), "01\n");
+        writeFile(root, interface + QStringLiteral("/interface"), "Video\n");
+        const auto snapshot = fixture(root);
+        const auto usb = deviceById(snapshot, QStringLiteral("usb:3-5"));
+        QCOMPARE(usb.value(QStringLiteral("name")).toString(), QStringLiteral("ASUS FHD webcam"));
+        const auto serial = fieldByKey(usb, QStringLiteral("serial"));
+        QVERIFY(serial.value(QStringLiteral("sensitive")).toBool());
+        QCOMPARE(serial.value(QStringLiteral("value")).toString(), QStringLiteral("200901010001"));
+        QCOMPARE(fieldByKey(usb, QStringLiteral("speed")).value(QStringLiteral("value")).toString(), QStringLiteral("480"));
+        QCOMPARE(fieldByKey(usb, QStringLiteral("speed")).value(QStringLiteral("unit")).toString(), QStringLiteral("Mbps"));
+        QCOMPARE(fieldByKey(usb, QStringLiteral("version")).value(QStringLiteral("value")).toString(), QStringLiteral("2.01"));
+        QCOMPARE(fieldByKey(usb, QStringLiteral("maxchild")).value(QStringLiteral("value")).toString(), QStringLiteral("0"));
+        QCOMPARE(fieldByKey(usb, QStringLiteral("busnum")).value(QStringLiteral("value")).toString(), QStringLiteral("3"));
+        QCOMPARE(fieldByKey(usb, QStringLiteral("devnum")).value(QStringLiteral("value")).toString(), QStringLiteral("2"));
+        QCOMPARE(fieldByKey(usb, QStringLiteral("Interface 0 class")).value(QStringLiteral("value")).toString(), QStringLiteral("0e"));
+        QCOMPARE(fieldByKey(usb, QStringLiteral("Interface 0 subclass")).value(QStringLiteral("value")).toString(), QStringLiteral("01"));
+        QCOMPARE(fieldByKey(usb, QStringLiteral("Interface 0 protocol")).value(QStringLiteral("value")).toString(), QStringLiteral("00"));
+        QCOMPARE(fieldByKey(usb, QStringLiteral("Interface 0 endpoints")).value(QStringLiteral("value")).toString(), QStringLiteral("01"));
+        QCOMPARE(fieldByKey(usb, QStringLiteral("Interface 0 name")).value(QStringLiteral("value")).toString(), QStringLiteral("Video"));
+        QVERIFY(deviceById(snapshot, QStringLiteral("usb:3-5:1.0")).isEmpty());
+    }
+
+    void pciDepthIncludesLinksIrqAndDriver()
+    {
+        QTemporaryDir root;
+        const QString base = QStringLiteral("/sys/bus/pci/devices/0000:01:00.0");
+        writeFile(root, base + QStringLiteral("/vendor"), "0x10de\n");
+        writeFile(root, base + QStringLiteral("/device"), "0x2704\n");
+        writeFile(root, base + QStringLiteral("/subsystem_vendor"), "0x1043\n");
+        writeFile(root, base + QStringLiteral("/subsystem_device"), "0x8765\n");
+        writeFile(root, base + QStringLiteral("/class"), "0x030000\n");
+        writeFile(root, base + QStringLiteral("/revision"), "0xa1\n");
+        writeFile(root, base + QStringLiteral("/irq"), "255\n");
+        writeFile(root, base + QStringLiteral("/local_cpulist"), "0-15\n");
+        writeFile(root, base + QStringLiteral("/numa_node"), "0\n");
+        writeFile(root, base + QStringLiteral("/current_link_speed"), "16.0 GT/s\n");
+        writeFile(root, base + QStringLiteral("/current_link_width"), "16\n");
+        writeFile(root, base + QStringLiteral("/max_link_speed"), "32.0 GT/s\n");
+        writeFile(root, base + QStringLiteral("/max_link_width"), "16\n");
+        writeFile(root, base + QStringLiteral("/power_state"), "D0\n");
+        writeFile(root, base + QStringLiteral("/d3cold_allowed"), "1\n");
+        writeFile(root, base + QStringLiteral("/label"), "fixture gpu\n");
+        writeFile(root, base + QStringLiteral("/index"), "1\n");
+        writeFile(root, base + QStringLiteral("/resource"),
+                  "0x00000000c0000000 0x00000000c0ffffff 0x00040200\n"
+                  "0x00000000c1000000 0x00000000c1ffffff 0x00040200\n");
+        writeFile(root, base + QStringLiteral("/msi_irqs/255"), "1\n");
+        QVERIFY(QDir().mkpath(root.path() + QStringLiteral("/sys/bus/pci/drivers/fixture-drv")));
+        QVERIFY(QFile::link(root.path() + QStringLiteral("/sys/bus/pci/drivers/fixture-drv"),
+                            root.path() + base + QStringLiteral("/driver")));
+        const auto pci = deviceById(fixture(root), QStringLiteral("pci:0000:01:00.0"));
+        QCOMPARE(pci.value(QStringLiteral("category")).toString(), QStringLiteral("显卡"));
+        QCOMPARE(fieldByKey(pci, QStringLiteral("subsystem_vendor")).value(QStringLiteral("value")).toString(), QStringLiteral("0x1043"));
+        QCOMPARE(fieldByKey(pci, QStringLiteral("subsystem_device")).value(QStringLiteral("value")).toString(), QStringLiteral("0x8765"));
+        QCOMPARE(fieldByKey(pci, QStringLiteral("irq")).value(QStringLiteral("value")).toString(), QStringLiteral("255"));
+        QCOMPARE(fieldByKey(pci, QStringLiteral("local_cpulist")).value(QStringLiteral("value")).toString(), QStringLiteral("0-15"));
+        QCOMPARE(fieldByKey(pci, QStringLiteral("numa_node")).value(QStringLiteral("value")).toString(), QStringLiteral("0"));
+        QCOMPARE(fieldByKey(pci, QStringLiteral("current_link_speed")).value(QStringLiteral("value")).toString(), QStringLiteral("16.0 GT/s"));
+        QCOMPARE(fieldByKey(pci, QStringLiteral("current_link_width")).value(QStringLiteral("value")).toString(), QStringLiteral("16"));
+        QCOMPARE(fieldByKey(pci, QStringLiteral("max_link_speed")).value(QStringLiteral("value")).toString(), QStringLiteral("32.0 GT/s"));
+        QCOMPARE(fieldByKey(pci, QStringLiteral("max_link_width")).value(QStringLiteral("value")).toString(), QStringLiteral("16"));
+        QCOMPARE(fieldByKey(pci, QStringLiteral("Driver")).value(QStringLiteral("value")).toString(), QStringLiteral("fixture-drv"));
+        QCOMPARE(fieldByKey(pci, QStringLiteral("power_state")).value(QStringLiteral("value")).toString(), QStringLiteral("D0"));
+        QCOMPARE(fieldByKey(pci, QStringLiteral("d3cold_allowed")).value(QStringLiteral("value")).toString(), QStringLiteral("1"));
+        QCOMPARE(fieldByKey(pci, QStringLiteral("label")).value(QStringLiteral("value")).toString(), QStringLiteral("fixture gpu"));
+        QCOMPARE(fieldByKey(pci, QStringLiteral("index")).value(QStringLiteral("value")).toString(), QStringLiteral("1"));
+        QVERIFY(fieldByKey(pci, QStringLiteral("resource")).value(QStringLiteral("value")).toString().contains(QStringLiteral("0x00000000c0000000")));
+        QCOMPARE(fieldByKey(pci, QStringLiteral("MSI IRQs")).value(QStringLiteral("value")).toString(), QStringLiteral("255"));
+    }
+
+    void batterySignedMeasurementsRemainValid()
+    {
+        QTemporaryDir root;
+        const QString base = QStringLiteral("/sys/class/power_supply/BAT0");
+        writeFile(root, base + QStringLiteral("/type"), "Battery\n");
+        writeFile(root, base + QStringLiteral("/temp"), "-50\n");
+        writeFile(root, base + QStringLiteral("/current_now"), "-1200000\n");
+        writeFile(root, base + QStringLiteral("/power_now"), "-3000000\n");
+        writeFile(root, base + QStringLiteral("/energy_now"), "-1000000\n");
+        writeFile(root, base + QStringLiteral("/voltage_now"), "-11000000\n");
+        const auto battery = deviceById(fixture(root), QStringLiteral("power:BAT0"));
+        const auto temperature = fieldByKey(battery, QStringLiteral("temp"));
+        QCOMPARE(temperature.value(QStringLiteral("status")).toString(), QStringLiteral("available"));
+        QCOMPARE(temperature.value(QStringLiteral("value")).toString(), QStringLiteral("-5.0"));
+        QCOMPARE(temperature.value(QStringLiteral("unit")).toString(), QStringLiteral("°C"));
+        QCOMPARE(temperature.value(QStringLiteral("rawValue")).toDouble(), -5.0);
+        const auto current = fieldByKey(battery, QStringLiteral("current_now"));
+        QCOMPARE(current.value(QStringLiteral("status")).toString(), QStringLiteral("available"));
+        QCOMPARE(current.value(QStringLiteral("value")).toString(), QStringLiteral("-1.200"));
+        QCOMPARE(current.value(QStringLiteral("unit")).toString(), QStringLiteral("A"));
+        QVERIFY(qAbs(current.value(QStringLiteral("rawValue")).toDouble() + 1.2) < 1e-9);
+        const auto power = fieldByKey(battery, QStringLiteral("power_now"));
+        QCOMPARE(power.value(QStringLiteral("status")).toString(), QStringLiteral("available"));
+        QCOMPARE(power.value(QStringLiteral("value")).toString(), QStringLiteral("-3.000"));
+        QCOMPARE(power.value(QStringLiteral("unit")).toString(), QStringLiteral("W"));
+        QVERIFY(qAbs(power.value(QStringLiteral("rawValue")).toDouble() + 3.0) < 1e-9);
+        const auto energy = fieldByKey(battery, QStringLiteral("energy_now"));
+        QCOMPARE(energy.value(QStringLiteral("status")).toString(), QStringLiteral("read-error"));
+        QCOMPARE(energy.value(QStringLiteral("value")).toString(), QString());
+        const auto voltage = fieldByKey(battery, QStringLiteral("voltage_now"));
+        QCOMPARE(voltage.value(QStringLiteral("status")).toString(), QStringLiteral("read-error"));
+        QCOMPARE(voltage.value(QStringLiteral("value")).toString(), QString());
+    }
 };
 
 QTEST_GUILESS_MAIN(InventoryTest)

@@ -57,6 +57,67 @@ QVariantMap Collector::valueField(const QString &key, const QString &value, cons
     return field(key, value.isEmpty() ? ReadResult{} : ReadResult{value, Available}, source, sensitive);
 }
 
+QVariantMap Collector::numericField(const QString &key, const QString &path,
+                                    const QString &unit, double divisor, int precision,
+                                    bool allowNegative)
+{
+    const ReadResult result = readText(path);
+    if (result.status != Available) {
+        QVariantMap item = field(key, result, path);
+        item.insert(QStringLiteral("reason"),
+                    result.status == PermissionDenied ? QStringLiteral("read access denied")
+                    : result.status == ReadError ? QStringLiteral("attribute could not be read")
+                                                 : QStringLiteral("attribute is absent or empty"));
+        return item;
+    }
+    static const QRegularExpression unsignedPattern(QStringLiteral("^[0-9]+$"));
+    static const QRegularExpression signedPattern(QStringLiteral("^-?[0-9]+$"));
+    bool ok = false;
+    const qint64 raw = result.value.toLongLong(&ok);
+    if (!ok || !(allowNegative ? signedPattern : unsignedPattern).match(result.value).hasMatch()) {
+        QVariantMap item = field(key, {{}, ReadError}, path);
+        item.insert(QStringLiteral("reason"), QStringLiteral("malformed numeric value"));
+        return item;
+    }
+    const double scaled = static_cast<double>(raw) / divisor;
+    const bool integral = precision < 0 && divisor == 1.0;
+    QVariantMap item = field(key,
+                             {integral ? QString::number(raw)
+                                       : QString::number(scaled, 'f', precision < 0 ? 2 : precision),
+                              Available},
+                             path);
+    item.insert(QStringLiteral("rawValue"),
+                integral ? QVariant::fromValue<qint64>(raw) : QVariant(scaled));
+    if (!unit.isEmpty())
+        item.insert(QStringLiteral("unit"), unit);
+    return item;
+}
+
+QVariantMap Collector::bytesField(const QString &key, const QString &path)
+{
+    const ReadResult result = readText(path);
+    if (result.status != Available) {
+        QVariantMap item = field(key, result, path);
+        item.insert(QStringLiteral("reason"),
+                    result.status == PermissionDenied ? QStringLiteral("read access denied")
+                    : result.status == ReadError ? QStringLiteral("attribute could not be read")
+                                                 : QStringLiteral("attribute is absent or empty"));
+        return item;
+    }
+    static const QRegularExpression integerPattern(QStringLiteral("^[0-9]+$"));
+    bool ok = false;
+    const quint64 raw = result.value.toULongLong(&ok);
+    if (!ok || !integerPattern.match(result.value).hasMatch()) {
+        QVariantMap item = field(key, {{}, ReadError}, path);
+        item.insert(QStringLiteral("reason"), QStringLiteral("malformed byte count"));
+        return item;
+    }
+    QVariantMap item = field(key, {prettyBytes(raw), Available}, path);
+    item.insert(QStringLiteral("rawValue"), QVariant::fromValue<quint64>(raw));
+    item.insert(QStringLiteral("unit"), QStringLiteral("bytes"));
+    return item;
+}
+
 QVariantMap Collector::device(const QString &id, const QString &category, const QString &name,
                    const QString &summary, const QString &source, const QVariantList &fields)
 {
