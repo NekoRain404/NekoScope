@@ -256,7 +256,11 @@ PageView {
                             }
                         }
                         Label {
-                            text: page.ui.status(fieldRow.modelData.status) + " · " + (fieldRow.modelData.source || "—")
+                            text: {
+                                const reason = fieldRow.modelData.reason ? page.ui.fieldReason(fieldRow.modelData.reason) : ""
+                                return page.ui.status(fieldRow.modelData.status) + (reason ? " · " + reason : "")
+                                        + " · " + (fieldRow.modelData.source || "—")
+                            }
                             color: page.ui.muted
                             font.pixelSize: page.ui.fontMicro
                             wrapMode: Text.WrapAnywhere

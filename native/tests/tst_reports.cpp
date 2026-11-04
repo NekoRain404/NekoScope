@@ -6,6 +6,7 @@
 #include <QJsonDocument>
 #include <QSettings>
 #include <QTemporaryDir>
+#include <QUrl>
 #include <QtTest>
 
 class ReportsTest : public QObject {
@@ -70,7 +71,7 @@ private slots:
         QVERIFY(markdown.startsWith(QStringLiteral("# NekoScope")));
         QVERIFY(markdown.contains(QStringLiteral("- Collected: ")));
         QVERIFY(markdown.contains(QStringLiteral("- Privacy: includes identifiers")));
-        QVERIFY(markdown.contains(QStringLiteral("| Section | Device | Field | Value | Status | Source |")));
+        QVERIFY(markdown.contains(QStringLiteral("| Section | Device | Field | Value | Status | Source | Reason |")));
         QVERIFY(markdown.contains(QStringLiteral("| Storage | disk | Model | FastDisk | ok | smartctl |")));
         QVERIFY(markdown.contains(QStringLiteral("| Sensor | CPU | temp | 42 C | ok | hwmon |")));
         QVERIFY(markdown.contains(QStringLiteral("| Test | benchmark | single |")));
@@ -103,7 +104,7 @@ private slots:
         QVERIFY(html.endsWith(QStringLiteral("</body></html>")));
         const auto csv = neko::ReportBuilder::serialize(doc, "csv");
         QVERIFY(csv.startsWith(QChar(0xfeff)));
-        QVERIFY(csv.contains(QStringLiteral("section,device,field,value,status,source\r\n")));
+        QVERIFY(csv.contains(QStringLiteral("section,device,field,value,status,source,reason\r\n")));
         QVERIFY(csv.contains(QStringLiteral("\"Storage\",\"disk\",\"Model\",\"FastDisk\"")));
     }
     void formatsListsSupportedOutputs()
@@ -116,6 +117,68 @@ private slots:
         QCOMPARE(service.formats(),
                  QStringList({QStringLiteral("html"), QStringLiteral("json"),
                               QStringLiteral("csv"), QStringLiteral("markdown")}));
+    }
+    void sensitiveFieldsMaskValueAndRawValue()
+    {
+        QVariantList fields{QVariantMap{{"key", "Serial"}, {"value", "SECRET-VALUE"},
+                                        {"rawValue", "SECRET-RAW"}, {"unit", "count"},
+                                        {"status", "available"}, {"sensitive", true}}};
+        QVariantList devices{QVariantMap{{"name", "disk"}, {"category", "Storage"}, {"fields", fields}}};
+        const auto doc = neko::ReportBuilder::document({}, devices, {}, {}, false, {});
+        const auto json = neko::ReportBuilder::serialize(doc, "json");
+        QVERIFY(!json.contains(QStringLiteral("SECRET")));
+        QVERIFY(json.contains(QStringLiteral("[redacted]")));
+        // Non-payload metadata stays readable for provenance.
+        QVERIFY(json.contains(QStringLiteral("\"unit\": \"count\"")));
+        const auto markdown = neko::ReportBuilder::serialize(doc, "markdown");
+        QVERIFY(!markdown.contains(QStringLiteral("SECRET")));
+        QVERIFY(markdown.contains(QStringLiteral("[redacted]")));
+    }
+    void wwidIsPrivateEvenWithoutSensitiveFlag()
+    {
+        QVariantList fields{QVariantMap{{"key", "Namespace 1 WWID"},
+                                        {"value", "eui.a428b7000001ff00"}}};
+        QVariantList devices{QVariantMap{{"name", "nvme"}, {"category", "Storage"}, {"fields", fields}}};
+        const auto json = neko::ReportBuilder::serialize(
+            neko::ReportBuilder::document({}, devices, {}, {}, false, {}), "json");
+        QVERIFY(!json.contains(QStringLiteral("eui.a428b7000001ff00")));
+        QVERIFY(json.contains(QStringLiteral("[redacted]")));
+    }
+    void reasonsAppearInEveryTableFormat()
+    {
+        const QString reason = QStringLiteral("kernel reports no measurement (sentinel value)");
+        QVariantList fields{QVariantMap{{"key", "Noise level"}, {"value", ""},
+                                        {"status", "unavailable"}, {"source", "/proc/net/wireless"},
+                                        {"reason", reason}}};
+        QVariantList devices{QVariantMap{{"name", "wlan0"}, {"category", "Network"}, {"fields", fields}}};
+        const auto doc = neko::ReportBuilder::document({}, devices, {}, {}, true, {});
+        const auto html = neko::ReportBuilder::serialize(doc, "html");
+        QVERIFY(html.contains(QStringLiteral("<th>Reason</th>")));
+        QVERIFY(html.contains(reason));
+        const auto csv = neko::ReportBuilder::serialize(doc, "csv");
+        QVERIFY(csv.contains(QStringLiteral("section,device,field,value,status,source,reason\r\n")));
+        QVERIFY(csv.contains(QStringLiteral("\"") + reason + QStringLiteral("\"")));
+        const auto markdown = neko::ReportBuilder::serialize(doc, "markdown");
+        QVERIFY(markdown.contains(QStringLiteral("| Section | Device | Field | Value | Status | Source | Reason |")));
+        QVERIFY(markdown.contains(QStringLiteral("| ") + reason + QStringLiteral(" |")));
+    }
+    void saveErrorsExposeStableKeys()
+    {
+        neko::HardwareService hardware;
+        neko::SensorService sensors;
+        neko::TestRunner runner(nullptr, {}, {}, QStringLiteral("/proc"),
+                                settingsDir_.filePath(QStringLiteral("benchmark-history.json")));
+        neko::ReportService service(hardware, sensors, runner);
+        QVERIFY(!service.save(QUrl(QStringLiteral("https://example.com/report.html")),
+                              QStringLiteral("html"), false, {}));
+        QCOMPARE(service.errorKey(), QStringLiteral("reports.error.local-file"));
+        QVERIFY(!service.save(QUrl::fromLocalFile(settingsDir_.filePath(QStringLiteral("report.xyz"))),
+                              QStringLiteral("exe"), false, {}));
+        QCOMPARE(service.errorKey(), QStringLiteral("reports.error.unsupported-format"));
+        QVERIFY(!service.save(QUrl::fromLocalFile(settingsDir_.filePath(QStringLiteral("missing/report.html"))),
+                              QStringLiteral("html"), false, {}));
+        QCOMPARE(service.errorKey(), QStringLiteral("reports.error.write-failed"));
+        QVERIFY(!service.error().isEmpty());
     }
 private:
     QTemporaryDir settingsDir_;

@@ -18,6 +18,7 @@ public:
     QString accent() const;
     bool reducedMotion() const;
     bool systemDark() const { return systemDark_; }
+    int schemaVersion() const { return schemaVersion_; }
     void setSystemDark(bool value);
     void setTheme(const QString &value);
     void setLanguage(const QString &value);
@@ -29,6 +30,7 @@ private:
     void initialize();
     void save(const QString &key, const QVariant &value);
     QSettings settings_;
+    int schemaVersion_ = 1;
     bool systemDark_ = false;
 };
 }

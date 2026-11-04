@@ -18,8 +18,10 @@ codebases in this repository:
 - Optional runtime tools: `stress-ng` for stress tests, `sysbench` for
   benchmarks. Missing tools appear as unavailable capabilities; nothing is
   installed automatically.
-- Optional collectors: `libdisplay-info` for richer EDID parsing when enabled
-  at build time.
+- Optional collectors: `libdisplay-info` for richer EDID parsing. It is enabled
+  automatically when pkg-config finds the library; set
+  `-DNEKOSCOPE_USE_DISPLAY_INFO=OFF` to disable it. Without it, the collector
+  keeps the conservative EDID base-block parser.
 
 ### Build and test
 

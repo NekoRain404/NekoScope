@@ -26,6 +26,8 @@ jobs:
         run: cmake --build build
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: QML lint
+        run: /usr/lib/qt6/bin/qmllint --unqualified disable native/qml/*.qml
       - name: GUI smoke test (offscreen)
         run: QT_QPA_PLATFORM=offscreen ./build/nekoscope --smoke-test --software
 

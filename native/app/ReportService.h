@@ -10,11 +10,13 @@ class TestRunner;
 class ReportService final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString error READ error NOTIFY changed)
+    Q_PROPERTY(QString errorKey READ errorKey NOTIFY changed)
     Q_PROPERTY(QString lastPath READ lastPath NOTIFY changed)
     Q_PROPERTY(QStringList formats READ formats CONSTANT)
 public:
     ReportService(HardwareService &hardware, SensorService &sensors, TestRunner &tests, QObject *parent = nullptr);
     QString error() const { return error_; }
+    QString errorKey() const { return errorKey_; }
     QString lastPath() const { return lastPath_; }
     QStringList formats() const { return {QStringLiteral("html"), QStringLiteral("json"),
                                           QStringLiteral("csv"), QStringLiteral("markdown")}; }
@@ -26,6 +28,6 @@ private:
     HardwareService &hardware_;
     SensorService &sensors_;
     TestRunner &tests_;
-    QString error_, lastPath_;
+    QString error_, errorKey_, lastPath_;
 };
 }

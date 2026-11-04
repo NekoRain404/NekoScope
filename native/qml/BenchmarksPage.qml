@@ -224,6 +224,14 @@ PageView {
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                     }
+                    Label {
+                        visible: !!(resultCard.modelData.reasonKey || resultCard.modelData.reason)
+                        text: page.ui.trKey(resultCard.modelData.reasonKey || "", resultCard.modelData.reasonParams, resultCard.modelData.reason || "")
+                        color: resultCard.modelData.status === "failed" ? page.ui.warning : page.ui.muted
+                        font.pixelSize: page.ui.fontMicro
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
                     RowLayout {
                         visible: resultCard.modelData.status === "completed" && resultCard.modelData.score !== undefined
                         Layout.fillWidth: true

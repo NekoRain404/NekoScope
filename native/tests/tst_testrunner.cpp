@@ -34,6 +34,13 @@ QString fixture(QTemporaryDir &dir, const QByteArray &body, const QString &name 
     if (!QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner)) return {};
     return path;
 }
+bool asciiKey(const QString &value)
+{
+    if (value.isEmpty()) return false;
+    for (const QChar character : value)
+        if (character.unicode() > 0x7f) return false;
+    return true;
+}
 bool processAlive(qint64 pid)
 {
 #ifdef Q_OS_LINUX
@@ -113,6 +120,11 @@ private slots:
         QCOMPARE(runner.history().first().toMap().value("exit-status").toString(), QStringLiteral("not-started"));
         QVERIFY(!runner.history().first().toMap().value("exit-code").isValid());
         QVERIFY(!runner.state().value("score").isValid());
+        const auto record = runner.history().first().toMap();
+        QVERIFY(asciiKey(record.value("reasonKey").toString()));
+        QCOMPARE(record.value("reasonKey").toString(), QStringLiteral("reason.missing-tool"));
+        QCOMPARE(record.value("reasonParams").toMap().value("tool").toString(), QStringLiteral("stress-ng"));
+        QVERIFY(asciiKey(runner.state().value("messageKey").toString()));
     }
     void startupIsAsynchronousAndFailureFinishesOnce()
     {
@@ -149,6 +161,8 @@ private slots:
         runner.stop();
         QTRY_COMPARE_WITH_TIMEOUT(runner.history().size(), 1, 4000);
         QCOMPARE(runner.history().first().toMap().value("status").toString(), QStringLiteral("cancelled"));
+        QCOMPARE(runner.history().first().toMap().value("reasonKey").toString(),
+                 QStringLiteral("reason.stopped-by-user"));
         QVERIFY(!runner.state().value("score").isValid());
     }
     void completionDrainsOutputRecordsInvocationAndLocale()
@@ -165,6 +179,8 @@ private slots:
         QCOMPARE(record.value("program").toString(), path);
         QVERIFY(record.value("arguments").toStringList().contains("--time=1"));
         QCOMPARE(record.value("version").toString(), QStringLiteral("1.0.20"));
+        QCOMPARE(record.value("reasonKey").toString(), QStringLiteral("reason.completed"));
+        QVERIFY(asciiKey(record.value("messageKey").toString()));
     }
     void failedExitNeverExposesParsedScore()
     {
@@ -176,6 +192,10 @@ private slots:
         QCOMPARE(runner.state().value("status").toString(), QStringLiteral("failed"));
         QVERIFY(!runner.state().value("score").isValid());
         QVERIFY(!runner.history().first().toMap().contains("score"));
+        const auto record = runner.history().first().toMap();
+        QVERIFY(asciiKey(record.value("reasonKey").toString()));
+        QVERIFY(!record.value("reason").toString().isEmpty());
+        QVERIFY(asciiKey(runner.state().value("messageKey").toString()));
     }
     void progressAdvancesWithoutOutput()
     {
@@ -259,6 +279,8 @@ private slots:
         QCOMPARE(runner.state().value("status").toString(), QStringLiteral("failed"));
         QVERIFY(runner.state().value("output").toString().isEmpty());
         QVERIFY(!runner.history().first().toMap().contains("score"));
+        QCOMPARE(runner.history().first().toMap().value("reasonKey").toString(),
+                 QStringLiteral("reason.memory-unavailable"));
     }
     void thermalProtectionTracksLossAndCompatibility()
     {
@@ -275,6 +297,8 @@ private slots:
         QCOMPARE(runner.state().value("thermalProtection").toBool(), false);
         QTRY_COMPARE_WITH_TIMEOUT(runner.history().size(), 1, 4000);
         QCOMPARE(runner.state().value("status").toString(), QStringLiteral("sensor-lost"));
+        QCOMPARE(runner.history().first().toMap().value("reasonKey").toString(),
+                 QStringLiteral("reason.sensor-lost"));
         QVERIFY(!runner.state().value("score").isValid());
         runner.checkTemperature(40.0);
         QVERIFY(runner.startBenchmark("single", 10));
@@ -282,6 +306,8 @@ private slots:
         runner.checkTemperature(90.0);
         QTRY_COMPARE_WITH_TIMEOUT(runner.history().size(), 2, 4000);
         QCOMPARE(runner.state().value("status").toString(), QStringLiteral("thermal-stop"));
+        QCOMPARE(runner.history().first().toMap().value("reasonKey").toString(),
+                 QStringLiteral("reason.thermal-stop"));
     }
     void staleTemperatureStopsProtectedRun()
     {
@@ -294,6 +320,8 @@ private slots:
         QCOMPARE(runner.state().value("status").toString(), QStringLiteral("sensor-lost"));
         QCOMPARE(runner.state().value("thermalStatus").toString(), QStringLiteral("stale"));
         QCOMPARE(runner.state().value("thermalProtection").toBool(), false);
+        QCOMPARE(runner.history().first().toMap().value("reasonKey").toString(),
+                 QStringLiteral("reason.sensor-lost-stale"));
     }
     void thermalLimitRejectsBeforeProcessStarts()
     {
@@ -305,6 +333,8 @@ private slots:
         QCOMPARE(runner.history().size(), 1);
         QCOMPARE(runner.state().value("status").toString(), QStringLiteral("thermal-stop"));
         QVERIFY(runner.state().value("output").toString().isEmpty());
+        QCOMPARE(runner.history().first().toMap().value("reasonKey").toString(),
+                 QStringLiteral("reason.thermal-stop-preflight"));
     }
     void expiredIdleSampleDoesNotCorruptNextStart()
     {
@@ -328,6 +358,8 @@ private slots:
         QTRY_COMPARE_WITH_TIMEOUT(runner.history().size(), 1, 5500);
         QCOMPARE(runner.state().value("status").toString(), QStringLiteral("failed"));
         QVERIFY(!runner.history().first().toMap().contains("score"));
+        QCOMPARE(runner.history().first().toMap().value("reasonKey").toString(),
+                 QStringLiteral("reason.timeout"));
     }
     void stopDuringStartupAndRestartRemainIndependent()
     {

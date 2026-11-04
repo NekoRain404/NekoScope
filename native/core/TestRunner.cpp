@@ -77,7 +77,9 @@ TestRunner::TestRunner(QObject *parent, QString stressNgPath, QString sysbenchPa
     m_state = {{"running", false}, {"kind", QString()}, {"type", QString()},
                {"status", QStringLiteral("idle")}, {"memory-mib", 0}, {"progress", 0},
                {"elapsed", 0}, {"duration", 0}, {"load", 0}, {"threads", 0},
-               {"message", QString()}, {"output", QString()}, {"score", QVariant()},
+               {"message", QString()}, {"messageKey", QString()},
+               {"messageParams", QVariantMap()}, {"reasonKey", QString()},
+               {"reasonParams", QVariantMap()}, {"output", QString()}, {"score", QVariant()},
                {"unit", QString()}, {"engine", QString()}, {"thermalProtection", false},
                {"thermalLimit", kThermalLimit}, {"thermalStatus", QStringLiteral("unavailable")},
                {"thermalFreshnessMs", kThermalFreshnessMs}, {"temperature", QVariant()}};
@@ -93,7 +95,8 @@ TestRunner::TestRunner(QObject *parent, QString stressNgPath, QString sysbenchPa
             finish(m_resultStatus, m_resultReason, m_exitCode, m_exitStatus);
     });
     connect(&m_timeoutTimer, &QTimer::timeout, this, [this] {
-        requestStop(QStringLiteral("failed"), QStringLiteral("测试超过时限，已终止"));
+        requestStop(QStringLiteral("failed"), QStringLiteral("测试超过时限，已终止"),
+                    QStringLiteral("reason.timeout"));
     });
     connect(&m_preparation, &QFutureWatcher<TestCommand>::finished, this, [this] {
         m_preparing = false;
@@ -103,7 +106,9 @@ TestRunner::TestRunner(QObject *parent, QString stressNgPath, QString sysbenchPa
             return;
         }
         const auto command = m_preparation.result();
-        if (!command.error.isEmpty()) finish(QStringLiteral("failed"), command.error);
+        if (!command.error.isEmpty())
+            finish(QStringLiteral("failed"), command.error, -1, QProcess::CrashExit,
+                   command.errorKey, command.errorParams);
         else launch(command);
     });
     connect(&m_process, &QProcess::started, this, [this] {
@@ -115,6 +120,10 @@ TestRunner::TestRunner(QObject *parent, QString stressNgPath, QString sysbenchPa
         } else {
             m_state.insert("status", QStringLiteral("running"));
             m_state.insert("message", QStringLiteral("测试已启动"));
+            m_state.insert("messageKey", QStringLiteral("message.running"));
+            m_state.insert("messageParams", QVariantMap());
+            m_state.insert("reasonKey", QString());
+            m_state.insert("reasonParams", QVariantMap());
             emit stateChanged();
         }
     });
@@ -217,11 +226,13 @@ TestCommand TestRunner::stressCommand(const QString &mode, int load, int threads
     if (mode != QStringLiteral("cpu") && mode != QStringLiteral("memory") &&
         mode != QStringLiteral("combined")) {
         result.error = QStringLiteral("不支持的压力测试类型");
+        result.errorKey = QStringLiteral("reason.unsupported-stress-type");
         return result;
     }
     if (load < kMinimumLoadPercent || load > kMaximumLoadPercent || duration < 1 ||
         duration > kMaximumDurationSeconds || memoryMiB < 1) {
         result.error = QStringLiteral("测试参数超出允许范围");
+        result.errorKey = QStringLiteral("reason.invalid-parameters");
         return result;
     }
     const int cpuCount = idealThreads > 0 ? idealThreads : qMax(1, QThread::idealThreadCount());
@@ -229,6 +240,7 @@ TestCommand TestRunner::stressCommand(const QString &mode, int load, int threads
     const bool needsMemory = mode == QStringLiteral("memory") || mode == QStringLiteral("combined");
     if (needsMemory && availableMiB < 0) {
         result.error = QStringLiteral("无法读取可用内存，不能安全启动内存压力测试");
+        result.errorKey = QStringLiteral("reason.memory-unavailable");
         return result;
     }
     int safeMemory = qMin(memoryMiB, kMemoryHardLimitMiB);
@@ -239,6 +251,7 @@ TestCommand TestRunner::stressCommand(const QString &mode, int load, int threads
     }
     if ((mode == QStringLiteral("memory") || mode == QStringLiteral("combined")) && safeMemory < 16) {
         result.error = QStringLiteral("可用内存不足以安全启动压力测试");
+        result.errorKey = QStringLiteral("reason.insufficient-memory");
         return result;
     }
     result.program = QStringLiteral("stress-ng");
@@ -267,10 +280,12 @@ TestCommand TestRunner::benchmarkCommand(const QString &type, int duration, int 
     if (type != QStringLiteral("single") && type != QStringLiteral("multi") &&
         type != QStringLiteral("memory")) {
         result.error = QStringLiteral("不支持的基准测试类型");
+        result.errorKey = QStringLiteral("reason.unsupported-benchmark-type");
         return result;
     }
     if (duration < 1 || duration > 300) {
         result.error = QStringLiteral("基准测试时长必须为 1 到 300 秒");
+        result.errorKey = QStringLiteral("reason.invalid-duration");
         return result;
     }
     const int cpuCount = idealThreads > 0 ? idealThreads : qMax(1, QThread::idealThreadCount());
@@ -295,7 +310,9 @@ TestCommand TestRunner::benchmarkCommand(const QString &type, int duration, int 
 QVariantMap TestRunner::parseBenchmark(const QString &type, const QString &output)
 {
     if (type != QStringLiteral("single") && type != QStringLiteral("multi") && type != QStringLiteral("memory"))
-        return {{"ok", false}, {"message", QStringLiteral("不支持的基准测试类型")}};
+        return {{"ok", false}, {"message", QStringLiteral("不支持的基准测试类型")},
+                {"messageKey", QStringLiteral("reason.unsupported-benchmark-type")},
+                {"messageParams", QVariantMap()}};
     const bool isMemory = type == QStringLiteral("memory");
     const QString pattern = isMemory
                                 ? QStringLiteral(R"(MiB\s+transferred\s*\(\s*([0-9]+(?:\.[0-9]+)?)\s*MiB/sec\s*\))")
@@ -304,11 +321,15 @@ QVariantMap TestRunner::parseBenchmark(const QString &type, const QString &outpu
                                                                QRegularExpression::CaseInsensitiveOption)
                                              .match(output);
     if (!match.hasMatch())
-        return {{"ok", false}, {"message", QStringLiteral("无法从基准输出解析有效成绩")}};
+        return {{"ok", false}, {"message", QStringLiteral("无法从基准输出解析有效成绩")},
+                {"messageKey", QStringLiteral("reason.benchmark-unparsed")},
+                {"messageParams", QVariantMap()}};
     bool ok = false;
     const double value = match.captured(1).toDouble(&ok);
     if (!ok || !std::isfinite(value) || value <= 0.0)
-        return {{"ok", false}, {"message", QStringLiteral("基准成绩无效")}};
+        return {{"ok", false}, {"message", QStringLiteral("基准成绩无效")},
+                {"messageKey", QStringLiteral("reason.benchmark-invalid")},
+                {"messageParams", QVariantMap()}};
     return {{"ok", true}, {"score", value},
             {"unit", isMemory ? QStringLiteral("MiB/s") : QStringLiteral("events/s")}};
 }
@@ -317,6 +338,7 @@ bool TestRunner::rejectBusy()
 {
     if (!m_active) return false;
     emit message(QStringLiteral("已有测试正在运行"));
+    emit keyedMessage(QStringLiteral("message.busy"), QVariantMap());
     return true;
 }
 
@@ -336,8 +358,12 @@ void TestRunner::begin(const TestCommand &command, const QString &kind, const QS
     m_version.clear();
     m_stopStatus.clear();
     m_stopReason.clear();
+    m_stopReasonKey.clear();
+    m_stopReasonParams.clear();
     m_resultStatus.clear();
     m_resultReason.clear();
+    m_resultReasonKey.clear();
+    m_resultReasonParams.clear();
     m_exitCode = -1;
     m_exitStatus = QProcess::CrashExit;
     m_state.insert("score", QVariant());
@@ -357,6 +383,10 @@ void TestRunner::begin(const TestCommand &command, const QString &kind, const QS
     m_state.insert("running", true);
     m_state.insert("status", QStringLiteral("starting"));
     m_state.insert("message", QStringLiteral("正在准备测试"));
+    m_state.insert("messageKey", QStringLiteral("message.preparing"));
+    m_state.insert("messageParams", QVariantMap());
+    m_state.insert("reasonKey", QString());
+    m_state.insert("reasonParams", QVariantMap());
     emit stateChanged();
 }
 
@@ -371,7 +401,13 @@ bool TestRunner::startStress(QString mode, int load, int threads, int duration, 
     begin(command, QStringLiteral("stress"), mode, duration, load);
     if (!m_active) return false;
     if (!command.error.isEmpty() || tool.isEmpty()) {
-        finish(QStringLiteral("failed"), !command.error.isEmpty() ? command.error : QStringLiteral("未找到 stress-ng；请安装后重试"));
+        if (!command.error.isEmpty())
+            finish(QStringLiteral("failed"), command.error, -1, QProcess::CrashExit,
+                   command.errorKey, command.errorParams);
+        else
+            finish(QStringLiteral("failed"), QStringLiteral("未找到 stress-ng；请安装后重试"),
+                   -1, QProcess::CrashExit, QStringLiteral("reason.missing-tool"),
+                   QVariantMap{{QStringLiteral("tool"), QStringLiteral("stress-ng")}});
         return false;
     }
     if (mode == QStringLiteral("cpu")) return launch(command);
@@ -393,7 +429,13 @@ bool TestRunner::startBenchmark(QString type, int duration)
     begin(command, QStringLiteral("benchmark"), type, duration, 100);
     if (!m_active) return false;
     if (!command.error.isEmpty() || command.program.isEmpty()) {
-        finish(QStringLiteral("failed"), !command.error.isEmpty() ? command.error : QStringLiteral("未找到 sysbench；请安装后重试"));
+        if (!command.error.isEmpty())
+            finish(QStringLiteral("failed"), command.error, -1, QProcess::CrashExit,
+                   command.errorKey, command.errorParams);
+        else
+            finish(QStringLiteral("failed"), QStringLiteral("未找到 sysbench；请安装后重试"),
+                   -1, QProcess::CrashExit, QStringLiteral("reason.missing-tool"),
+                   QVariantMap{{QStringLiteral("tool"), QStringLiteral("sysbench")}});
         return false;
     }
     return launch(command);
@@ -404,7 +446,8 @@ bool TestRunner::launch(const TestCommand &command)
     updateThermalState();
     if (!m_active || !m_stopStatus.isEmpty()) return false;
     if (m_thermalAvailable && m_temperature >= kThermalLimit) {
-        finish(QStringLiteral("thermal-stop"), QStringLiteral("温度达到 90 °C，未启动测试"));
+        finish(QStringLiteral("thermal-stop"), QStringLiteral("温度达到 90 °C，未启动测试"),
+               -1, QProcess::CrashExit, QStringLiteral("reason.thermal-stop-preflight"));
         return false;
     }
     m_state.insert("program", command.program);
@@ -455,7 +498,9 @@ void TestRunner::updateThermalState()
         m_state.insert("thermalProtection", false);
         m_state.insert("temperature", QVariant());
         emit stateChanged();
-        if (m_active) requestStop(QStringLiteral("sensor-lost"), QStringLiteral("温度采集已过期，测试已停止"));
+        if (m_active)
+            requestStop(QStringLiteral("sensor-lost"), QStringLiteral("温度采集已过期，测试已停止"),
+                        QStringLiteral("reason.sensor-lost-stale"));
     }
 }
 
@@ -473,22 +518,35 @@ void TestRunner::observeTemperature(bool available, double celsius)
     emit stateChanged();
     if (!m_active) return;
     if (m_thermalAvailable && celsius >= kThermalLimit)
-        requestStop(QStringLiteral("thermal-stop"), QStringLiteral("温度达到 90 °C，测试已停止"));
+        requestStop(QStringLiteral("thermal-stop"), QStringLiteral("温度达到 90 °C，测试已停止"),
+                    QStringLiteral("reason.thermal-stop"));
     else if (wasAvailable && !m_thermalAvailable)
-        requestStop(QStringLiteral("sensor-lost"), QStringLiteral("温度传感器不可用，测试已停止"));
+        requestStop(QStringLiteral("sensor-lost"), QStringLiteral("温度传感器不可用，测试已停止"),
+                    QStringLiteral("reason.sensor-lost"));
 }
 
 void TestRunner::checkTemperature(double celsius) { observeTemperature(true, celsius); }
-void TestRunner::stop() { requestStop(QStringLiteral("cancelled"), QStringLiteral("用户取消")); }
+void TestRunner::stop()
+{
+    requestStop(QStringLiteral("cancelled"), QStringLiteral("用户取消"),
+                QStringLiteral("reason.stopped-by-user"));
+}
 
-void TestRunner::requestStop(const QString &status, const QString &reason)
+void TestRunner::requestStop(const QString &status, const QString &reason,
+                             const QString &reasonKey, const QVariantMap &params)
 {
     if (!m_active || !m_stopStatus.isEmpty() || m_rootFinished) return;
     m_stopStatus = status;
     m_stopReason = reason;
+    m_stopReasonKey = reasonKey;
+    m_stopReasonParams = params;
     m_timeoutTimer.stop();
     m_state.insert("status", QStringLiteral("stopping"));
     m_state.insert("message", reason);
+    m_state.insert("messageKey", reasonKey);
+    m_state.insert("messageParams", params);
+    m_state.insert("reasonKey", reasonKey);
+    m_state.insert("reasonParams", params);
     emit stateChanged();
     if (m_preparing) return;
     if (m_process.state() == QProcess::NotRunning) { finish(status, reason); return; }
@@ -527,20 +585,30 @@ void TestRunner::onFinished(int exitCode, QProcess::ExitStatus exitStatus)
     if (!m_stopStatus.isEmpty()) {
         m_resultStatus = m_stopStatus;
         m_resultReason = m_stopReason;
+        m_resultReasonKey = m_stopReasonKey;
+        m_resultReasonParams = m_stopReasonParams;
     } else if (exitStatus != QProcess::NormalExit || exitCode != 0) {
         m_resultStatus = QStringLiteral("failed");
         m_resultReason = QStringLiteral("测试进程异常结束");
+        m_resultReasonKey = QStringLiteral("reason.process-failed");
+        m_resultReasonParams.clear();
     } else if (m_kind == QStringLiteral("benchmark")) {
         const auto parsed = parseBenchmark(m_type, m_output);
-        m_resultStatus = parsed.value("ok").toBool() ? QStringLiteral("completed") : QStringLiteral("failed");
-        m_resultReason = parsed.value("ok").toBool() ? QStringLiteral("测试完成") : parsed.value("message").toString();
-        if (parsed.value("ok").toBool()) {
+        const bool ok = parsed.value("ok").toBool();
+        m_resultStatus = ok ? QStringLiteral("completed") : QStringLiteral("failed");
+        m_resultReason = ok ? QStringLiteral("测试完成") : parsed.value("message").toString();
+        m_resultReasonKey = ok ? QStringLiteral("reason.completed")
+                               : parsed.value("messageKey").toString();
+        m_resultReasonParams = ok ? QVariantMap() : parsed.value("messageParams").toMap();
+        if (ok) {
             m_state.insert("score", parsed.value("score"));
             m_state.insert("unit", parsed.value("unit"));
         }
     } else {
         m_resultStatus = QStringLiteral("completed");
         m_resultReason = QStringLiteral("测试完成");
+        m_resultReasonKey = QStringLiteral("reason.completed");
+        m_resultReasonParams.clear();
     }
     if (groupExists()) {
         signalProcessGroup(SIGTERM);
@@ -553,29 +621,53 @@ void TestRunner::onFinished(int exitCode, QProcess::ExitStatus exitStatus)
 void TestRunner::onError(QProcess::ProcessError error)
 {
     if (m_active && error == QProcess::FailedToStart) {
-        const auto reason = !m_stopStatus.isEmpty() ? m_stopReason : QStringLiteral("无法启动测试工具：%1").arg(m_process.errorString());
-        finish(!m_stopStatus.isEmpty() ? m_stopStatus : QStringLiteral("failed"), reason);
+        if (!m_stopStatus.isEmpty()) {
+            finish(m_stopStatus, m_stopReason);
+        } else {
+            finish(QStringLiteral("failed"),
+                   QStringLiteral("无法启动测试工具：%1").arg(m_process.errorString()),
+                   -1, QProcess::CrashExit, QStringLiteral("reason.launch-failed"),
+                   QVariantMap{{QStringLiteral("error"), m_process.errorString()}});
+        }
     }
 }
 
-void TestRunner::finish(QString status, QString reason, int exitCode, QProcess::ExitStatus exitStatus)
+void TestRunner::finish(QString status, QString reason, int exitCode, QProcess::ExitStatus exitStatus,
+                        const QString &reasonKey, const QVariantMap &params)
 {
     if (!m_active) return;
     m_timeoutTimer.stop();
     m_killTimer.stop();
     m_active = false;
     m_processGroup = 0;
+    QString key = reasonKey;
+    QVariantMap keyParams = params;
+    if (key.isEmpty()) {
+        if (!m_resultReasonKey.isEmpty()) {
+            key = m_resultReasonKey;
+            keyParams = m_resultReasonParams;
+        } else {
+            key = m_stopReasonKey;
+            keyParams = m_stopReasonParams;
+        }
+    }
     const auto endedAt = QDateTime::currentDateTimeUtc();
     const auto elapsed = m_elapsed.isValid() ? m_elapsed.elapsed() / 1000 : 0;
     m_state.insert("running", false);
     m_state.insert("status", status);
     m_state.insert("message", reason);
+    m_state.insert("messageKey", key);
+    m_state.insert("messageParams", keyParams);
+    m_state.insert("reasonKey", key);
+    m_state.insert("reasonParams", keyParams);
     m_state.insert("elapsed", elapsed);
     m_state.insert("progress", status == QStringLiteral("completed") ? QVariant(100) : m_state.value("progress"));
     m_state.insert("output", m_output);
     if (status != QStringLiteral("completed")) m_state.insert("score", QVariant());
     const auto version = m_version;
     QVariantMap record{{"kind", m_kind}, {"type", m_type}, {"status", status}, {"reason", reason},
+                       {"messageKey", key}, {"messageParams", keyParams},
+                       {"reasonKey", key}, {"reasonParams", keyParams},
                        {"started-at", QDateTime::fromMSecsSinceEpoch(m_startedAtMs).toUTC().toString(Qt::ISODateWithMs)},
                        {"ended-at", endedAt.toString(Qt::ISODateWithMs)}, {"elapsed", elapsed},
                        {"duration", m_duration}, {"load", m_state.value("load")}, {"threads", m_state.value("threads")},
@@ -597,6 +689,7 @@ void TestRunner::finish(QString status, QString reason, int exitCode, QProcess::
     emit stateChanged();
     emit historyChanged();
     emit message(reason);
+    emit keyedMessage(key, keyParams);
 }
 
 } // namespace neko

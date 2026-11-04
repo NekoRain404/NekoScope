@@ -14,14 +14,19 @@ Item {
     implicitHeight: 210
     Accessible.role: Accessible.Chart
     Accessible.name: ui.t("实时历史曲线", "Live history chart")
-    readonly property var validSamples: samples.filter(value => Number.isFinite(Number(value)) && Number(value) >= 0)
-    readonly property real upperBound: Math.max(maximum, ...validSamples, 1)
+    // Keep finite readings, including legitimate subzero values. Null/undefined
+    // and empty strings are absence sentinels, not measurements.
+    readonly property var validSamples: samples.filter(value => value !== null && value !== undefined && value !== ""
+        && Number.isFinite(Number(value)))
+    readonly property real lowerBound: Math.min(0, ...validSamples)
+    readonly property real upperBound: Math.max(maximum, ...validSamples, lowerBound + 1)
+    readonly property real valueRange: Math.max(upperBound - lowerBound, 1)
     function points() {
         const result = []
         const values = validSamples
         for (let i = 0; i < values.length; ++i)
             result.push(Qt.point(i * plot.width / Math.max(values.length - 1, 1),
-                                 plot.height * (1 - Math.max(0, values[i]) / upperBound)))
+                                 plot.height * (1 - (Number(values[i]) - chart.lowerBound) / chart.valueRange)))
         return result
     }
     function areaPoints() {
@@ -39,7 +44,7 @@ Item {
             height: 1
             Label {
                 width: 34
-                text: Math.round(chart.upperBound * (1 - index / 4))
+                text: Math.round(chart.lowerBound + chart.valueRange * (1 - index / 4))
                 color: chart.ui.muted
                 font.pixelSize: chart.ui.fontMicro
                 y: -6

@@ -10,7 +10,18 @@ PageView {
     property string previewText: ""
     property bool initialized: false
     readonly property var categories: Array.from(new Set(hardware.devices.map(item => item.category)))
-    readonly property string format: ["html", "json", "csv", "markdown"][formatBox.currentIndex]
+    readonly property var formatIds: Array.from(reports.formats)
+    readonly property string format: page.formatIds[formatBox.currentIndex] || ""
+    readonly property var formatLabels: ({
+        "html": ["HTML · 可读报告", "HTML · Readable report"],
+        "json": ["JSON · 结构化数据", "JSON · Structured data"],
+        "csv": ["CSV · 字段表格", "CSV · Field table"],
+        "markdown": ["Markdown · 文档", "Markdown · Document"]
+    })
+    function formatLabel(id) {
+        const entry = page.formatLabels[id]
+        return entry ? page.ui.t(entry[0], entry[1]) : id
+    }
     function selectAll() { selectedCategories = categories.slice(); refreshPreview() }
     function toggleCategory(category, included) {
         selectedCategories = included ? [...selectedCategories, category] : selectedCategories.filter(item => item !== category)
@@ -138,10 +149,7 @@ PageView {
             SelectBox {
                 id: formatBox
                 ui: page.ui
-                model: [page.ui.t("HTML · 可读报告", "HTML · Readable report"),
-                        page.ui.t("JSON · 结构化数据", "JSON · Structured data"),
-                        page.ui.t("CSV · 字段表格", "CSV · Field table"),
-                        page.ui.t("Markdown · 文档", "Markdown · Document")]
+                model: page.formatIds.map(item => page.formatLabel(item))
                 Layout.fillWidth: true
                 onCurrentIndexChanged: page.refreshPreview()
                 objectName: "reportFormatSelector"
@@ -208,7 +216,7 @@ PageView {
                 Layout.fillWidth: true
                 compact: true
                 visible: !!reports.error
-                text: reports.error
+                text: page.ui.trKey(reports.errorKey || "", null, reports.error)
                 tone: page.ui.warning
                 surfaceColor: page.ui.warningSoft
             }

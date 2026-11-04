@@ -16,14 +16,22 @@ QString ReportService::preview(const QString &format, bool includeSensitive, con
 bool ReportService::save(const QUrl &url, const QString &format, bool includeSensitive, const QStringList &categories)
 {
     error_.clear();
-    if (!url.isLocalFile() || url.toLocalFile().isEmpty()) error_ = QStringLiteral("Choose a local file");
+    errorKey_.clear();
+    if (!url.isLocalFile() || url.toLocalFile().isEmpty()) {
+        error_ = QStringLiteral("Choose a local file");
+        errorKey_ = QStringLiteral("reports.error.local-file");
+    }
     const QString content = preview(format, includeSensitive, categories);
-    if (content.isEmpty()) error_ = QStringLiteral("Unsupported report format");
+    if (content.isEmpty()) {
+        error_ = QStringLiteral("Unsupported report format");
+        errorKey_ = QStringLiteral("reports.error.unsupported-format");
+    }
     if (!error_.isEmpty()) { emit changed(); return false; }
     QSaveFile file(url.toLocalFile());
     const QByteArray bytes = content.toUtf8();
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
         error_ = file.errorString();
+        errorKey_ = QStringLiteral("reports.error.write-failed");
         emit changed();
         return false;
     }

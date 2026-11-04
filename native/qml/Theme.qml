@@ -118,9 +118,79 @@ QtObject {
             "idle": ["准备就绪", "Ready"], "starting": ["正在启动", "Starting"],
             "running": ["正在运行", "Running"], "stopping": ["正在停止", "Stopping"],
             "completed": ["已完成", "Completed"], "cancelled": ["已取消", "Cancelled"],
-            "failed": ["失败", "Failed"], "thermal-stop": ["温度保护停止", "Thermal stop"]
+            "failed": ["失败", "Failed"], "thermal-stop": ["温度保护停止", "Thermal stop"],
+            "sensor-lost": ["传感器丢失", "Sensor lost"], "read-error": ["读取失败", "Read error"],
+            "fresh": ["最新", "Fresh"]
         }
         return names[value] ? t(names[value][0], names[value][1]) : (value || t("未知", "Unknown"))
+    }
+
+    // Stable ASCII keys authored by backend services. Unknown keys fall back to
+    // the raw diagnostic text so older records still render.
+    readonly property var keyedMessages: ({
+        "message.busy": ["已有测试正在运行", "A test is already running"],
+        "message.preparing": ["正在准备测试", "Preparing the test"],
+        "message.running": ["测试已启动", "Test started"],
+        "reason.completed": ["测试完成", "Test completed"],
+        "reason.stopped-by-user": ["用户取消", "Stopped by user"],
+        "reason.thermal-stop": ["温度达到 90 °C，测试已停止", "Temperature reached 90 °C; the test was stopped"],
+        "reason.thermal-stop-preflight": ["温度达到 90 °C，未启动测试", "Temperature reached 90 °C; the test was not started"],
+        "reason.sensor-lost": ["温度传感器不可用，测试已停止", "Temperature sensor became unavailable; the test was stopped"],
+        "reason.sensor-lost-stale": ["温度采集已过期，测试已停止", "Temperature readings became stale; the test was stopped"],
+        "reason.timeout": ["测试超过时限，已终止", "The test exceeded its time limit and was terminated"],
+        "reason.missing-tool": ["未找到 {tool}；请安装后重试", "Missing {tool}. Install it and try again."],
+        "reason.memory-unavailable": ["无法读取可用内存，不能安全启动内存压力测试", "Available memory could not be read; the memory test cannot start safely"],
+        "reason.insufficient-memory": ["可用内存不足以安全启动压力测试", "Not enough available memory to start the stress test safely"],
+        "reason.launch-failed": ["无法启动测试工具：{error}", "The test tool could not be started: {error}"],
+        "reason.process-failed": ["测试进程异常结束", "The test process ended unexpectedly"],
+        "reason.unsupported-stress-type": ["不支持的压力测试类型", "Unsupported stress test type"],
+        "reason.invalid-parameters": ["测试参数超出允许范围", "Test parameters are outside the allowed range"],
+        "reason.unsupported-benchmark-type": ["不支持的基准测试类型", "Unsupported benchmark type"],
+        "reason.invalid-duration": ["基准测试时长必须为 1 到 300 秒", "Benchmark duration must be between 1 and 300 seconds"],
+        "reason.benchmark-unparsed": ["无法从基准输出解析有效成绩", "No valid score could be parsed from the benchmark output"],
+        "reason.benchmark-invalid": ["基准成绩无效", "The benchmark score was invalid"],
+        "reports.error.local-file": ["请选择本地文件", "Choose a local file"],
+        "reports.error.unsupported-format": ["不支持的报告格式", "Unsupported report format"],
+        "reports.error.write-failed": ["无法写入报告文件", "Unable to write the report file"]
+    })
+    function trKey(key, params, fallback) {
+        const entry = key ? keyedMessages[key] : undefined
+        if (!entry) return fallback === undefined || fallback === null ? (key || "") : String(fallback)
+        let text = t(entry[0], entry[1])
+        if (params) {
+            for (const name of Object.keys(params))
+                text = text.replace("{" + name + "}", String(params[name]))
+        }
+        return text
+    }
+    function message(key, params, fallback) { return trKey(key, params, fallback) }
+    function reason(key, params, fallback) { return trKey(key, params, fallback) }
+    // Inventory reasons are stable English tokens; translate known tokens and
+    // show anything else verbatim rather than hiding the diagnostic.
+    function fieldReason(value) {
+        if (!value) return ""
+        const names = {
+            "read access denied": ["读取权限不足", "Read access denied"],
+            "attribute could not be read": ["属性无法读取", "Attribute could not be read"],
+            "attribute is absent or empty": ["属性缺失或为空", "Attribute is absent or empty"],
+            "malformed numeric value": ["数值格式无效", "Malformed numeric value"],
+            "malformed byte count": ["字节数格式无效", "Malformed byte count"],
+            "sector count overflows byte capacity": ["扇区数超过容量上限", "Sector count overflows byte capacity"],
+            "NVMe hwmon interface is not present": ["NVMe hwmon 接口不存在", "NVMe hwmon interface is not present"],
+            "No unprivileged kernel interface exposes NVMe SMART health; privileged ioctls are not used": ["没有非特权内核接口提供 NVMe SMART 健康信息；不使用特权 ioctl", "No unprivileged kernel interface exposes NVMe SMART health; privileged ioctls are not used"],
+            "GPU hwmon interface is not present": ["GPU hwmon 接口不存在", "GPU hwmon interface is not present"],
+            "kernel uevent does not expose PCI_SLOT_NAME": ["内核 uevent 未提供 PCI_SLOT_NAME", "Kernel uevent does not expose PCI_SLOT_NAME"],
+            "phy80211 link is not exposed": ["未提供 phy80211 链接", "phy80211 link is not exposed"],
+            "wireless statistics are not exposed by /proc/net/wireless": ["/proc/net/wireless 未提供无线统计", "Wireless statistics are not exposed by /proc/net/wireless"],
+            "interface is not present in /proc/net/wireless (link may be down)": ["接口未出现在 /proc/net/wireless 中（链路可能已断开）", "Interface is not present in /proc/net/wireless (link may be down)"],
+            "wireless statistics row is incomplete": ["无线统计行不完整", "Wireless statistics row is incomplete"],
+            "malformed wireless statistics value": ["无线统计值格式无效", "Malformed wireless statistics value"],
+            "kernel reports no measurement (sentinel value)": ["内核报告无有效测量值（哨兵值）", "Kernel reports no measurement (sentinel value)"],
+            "SMART backend not implemented; no health query performed": ["SMART 后端尚未实现；未执行健康查询", "SMART backend not implemented; no health query performed"],
+            "no MSI vectors exposed": ["未提供 MSI 向量", "No MSI vectors exposed"],
+            "libdisplay-info could not parse EDID": ["libdisplay-info 无法解析 EDID", "libdisplay-info could not parse EDID"]
+        }
+        return names[value] ? t(names[value][0], names[value][1]) : String(value)
     }
     function category(value) {
         const names = {"CPU": ["处理器", "Processor"], "内存": ["内存", "Memory"],

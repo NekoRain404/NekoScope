@@ -15,6 +15,9 @@ struct TestCommand
     QString program;
     QStringList arguments;
     QString error;
+    // Stable ASCII key for backend-authored text; the raw error stays for diagnostics.
+    QString errorKey;
+    QVariantMap errorParams;
     QString unit;
     int memoryMiB = 0;
     int threads = 0;
@@ -55,6 +58,8 @@ signals:
     void stateChanged();
     void historyChanged();
     void message(const QString &text);
+    // Stable ASCII key accompanying backend-authored text for UI translation.
+    void keyedMessage(const QString &key, const QVariantMap &params);
 
 private:
     bool rejectBusy();
@@ -64,13 +69,15 @@ private:
     void appendOutput(const QByteArray &bytes);
     void updateProgress();
     void updateThermalState();
-    void requestStop(const QString &status, const QString &reason);
+    void requestStop(const QString &status, const QString &reason, const QString &reasonKey = {},
+                     const QVariantMap &params = {});
     void signalProcessGroup(int signal);
     bool groupExists() const;
     void onFinished(int exitCode, QProcess::ExitStatus exitStatus);
     void onError(QProcess::ProcessError error);
     void finish(QString status, QString reason, int exitCode = -1,
-                QProcess::ExitStatus exitStatus = QProcess::CrashExit);
+                QProcess::ExitStatus exitStatus = QProcess::CrashExit,
+                const QString &reasonKey = {}, const QVariantMap &params = {});
     QString findTool(const QString &name, const QString &overridePath) const;
     void loadHistory();
     void saveHistory() const;
@@ -95,8 +102,12 @@ private:
     QString m_version;
     QString m_stopStatus;
     QString m_stopReason;
+    QString m_stopReasonKey;
+    QVariantMap m_stopReasonParams;
     QString m_resultStatus;
     QString m_resultReason;
+    QString m_resultReasonKey;
+    QVariantMap m_resultReasonParams;
     qint64 m_startedAtMs = 0;
     qint64 m_processGroup = 0;
     int m_duration = 0;

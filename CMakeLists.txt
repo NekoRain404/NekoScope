@@ -33,6 +33,21 @@ add_library(neko_core STATIC
 target_include_directories(neko_core PUBLIC native)
 target_link_libraries(neko_core PUBLIC Qt6::Core Qt6::Concurrent neko_options)
 
+# Optional richer EDID parsing. Never a hard dependency: when the library or
+# pkg-config is missing, the collector keeps its conservative base-block parser.
+option(NEKOSCOPE_USE_DISPLAY_INFO "Use libdisplay-info for richer EDID parsing when available" ON)
+if(NEKOSCOPE_USE_DISPLAY_INFO)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(DISPLAY_INFO QUIET IMPORTED_TARGET libdisplay-info)
+        if(DISPLAY_INFO_FOUND)
+            target_link_libraries(neko_core PUBLIC PkgConfig::DISPLAY_INFO)
+            target_compile_definitions(neko_core PRIVATE NEKO_HAS_DISPLAY_INFO=1)
+            message(STATUS "libdisplay-info enabled for EDID parsing")
+        endif()
+    endif()
+endif()
+
 if(NEKOSCOPE_BUILD_GUI)
     find_package(Qt6 6.4 REQUIRED COMPONENTS Gui Qml Quick QuickControls2)
     qt_standard_project_setup()

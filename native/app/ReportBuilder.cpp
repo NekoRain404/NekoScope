@@ -2,12 +2,13 @@
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QRegularExpression>
+#include <QSet>
 
 namespace neko {
 namespace {
 bool privateKey(const QString &key)
 {
-    static const QRegularExpression pattern("serial|uuid|machine.?id|hostname|host.?name|mac|address|wwn|home|user.?name", QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression pattern("serial|uuid|machine.?id|hostname|host.?name|mac|address|wwn|wwid|namespace.?id|home|user.?name", QRegularExpression::CaseInsensitiveOption);
     return pattern.match(key).hasMatch();
 }
 QVariant redact(const QVariant &value, bool sensitive)
@@ -16,9 +17,19 @@ QVariant redact(const QVariant &value, bool sensitive)
     if (value.metaType().id() == QMetaType::QVariantMap) {
         auto map = value.toMap();
         const bool secretValue = map.value("sensitive").toBool() || privateKey(map.value("key").toString());
-        for (auto it = map.begin(); it != map.end(); ++it)
-            it.value() = redact(it.value(), privateKey(it.key()) || (it.key() == "value" && secretValue)
-                                || it.key() == "output");
+        // Field metadata describes the record; every other key is payload.
+        // A sensitive field must mask all of its payload, including rawValue,
+        // not only the display value.
+        static const QSet<QString> metadata{
+            QStringLiteral("key"), QStringLiteral("status"), QStringLiteral("source"),
+            QStringLiteral("sensitive"), QStringLiteral("unit"), QStringLiteral("reason"),
+            QStringLiteral("category"), QStringLiteral("name"), QStringLiteral("collectedAt"),
+            QStringLiteral("updatedAt")};
+        for (auto it = map.begin(); it != map.end(); ++it) {
+            const bool secretKey = privateKey(it.key()) || it.key() == QStringLiteral("output");
+            const bool payload = !metadata.contains(it.key());
+            it.value() = redact(it.value(), secretKey || (secretValue && payload));
+        }
         return map;
     }
     if (value.metaType().id() == QMetaType::QVariantList) {
@@ -62,14 +73,14 @@ QString markdownCell(QString value)
 
 using ReportRow = QStringList;
 
-// All three table formats share the same section/device/field/value/status/source rows.
+// All three table formats share the same section/device/field/value/status/source/reason rows.
 QList<ReportRow> reportRows(const QVariantMap &document)
 {
     QList<ReportRow> rows;
     const auto system = document.value(QStringLiteral("system")).toMap();
     for (auto it = system.cbegin(); it != system.cend(); ++it) {
         rows.append({QStringLiteral("System"), QString(), it.key(), textValue(it.value()),
-                     QString(), QString()});
+                     QString(), QString(), QString()});
     }
     for (const auto &entry : document.value(QStringLiteral("devices")).toList()) {
         const auto device = entry.toMap();
@@ -80,7 +91,8 @@ QList<ReportRow> reportRows(const QVariantMap &document)
                          field.value(QStringLiteral("key")).toString(),
                          textValue(field.value(QStringLiteral("value"))),
                          field.value(QStringLiteral("status")).toString(),
-                         field.value(QStringLiteral("source")).toString()});
+                         field.value(QStringLiteral("source")).toString(),
+                         field.value(QStringLiteral("reason")).toString()});
         }
     }
     for (const auto &entry : document.value(QStringLiteral("sensors")).toList()) {
@@ -90,21 +102,23 @@ QList<ReportRow> reportRows(const QVariantMap &document)
                      textValue(sensor.value(QStringLiteral("value"))) + QLatin1Char(' ') +
                          sensor.value(QStringLiteral("unit")).toString(),
                      sensor.value(QStringLiteral("status")).toString(),
-                     sensor.value(QStringLiteral("source")).toString()});
+                     sensor.value(QStringLiteral("source")).toString(),
+                     sensor.value(QStringLiteral("reason")).toString()});
     }
     for (const auto &entry : document.value(QStringLiteral("tests")).toList()) {
         const auto test = entry.toMap();
         rows.append({QStringLiteral("Test"), test.value(QStringLiteral("kind")).toString(),
                      test.value(QStringLiteral("type")).toString(), textValue(test),
                      test.value(QStringLiteral("status")).toString(),
-                     test.value(QStringLiteral("engine")).toString()});
+                     test.value(QStringLiteral("engine")).toString(),
+                     test.value(QStringLiteral("reason")).toString()});
     }
     return rows;
 }
 
 QString htmlReport(const QVariantMap &document)
 {
-    QString out = QStringLiteral("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>NekoScope report</title><style>body{font:14px system-ui;max-width:1100px;margin:40px auto;padding:20px;color:#272435}table{border-collapse:collapse;width:100%;margin:20px 0}td,th{padding:10px;text-align:left;border-bottom:1px solid #ddd;overflow-wrap:anywhere}pre{white-space:pre-wrap}</style><body><h1>NekoScope</h1><p>Real hardware snapshot · %1 · %2</p><table><thead><tr><th>Section</th><th>Device</th><th>Field</th><th>Value</th><th>Status</th><th>Source</th></tr></thead><tbody>")
+    QString out = QStringLiteral("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>NekoScope report</title><style>body{font:14px system-ui;max-width:1100px;margin:40px auto;padding:20px;color:#272435}table{border-collapse:collapse;width:100%;margin:20px 0}td,th{padding:10px;text-align:left;border-bottom:1px solid #ddd;overflow-wrap:anywhere}pre{white-space:pre-wrap}</style><body><h1>NekoScope</h1><p>Real hardware snapshot · %1 · %2</p><table><thead><tr><th>Section</th><th>Device</th><th>Field</th><th>Value</th><th>Status</th><th>Source</th><th>Reason</th></tr></thead><tbody>")
         .arg(document.value(QStringLiteral("generatedAt")).toString().toHtmlEscaped(),
              document.value(QStringLiteral("redacted")).toBool()
                  ? QStringLiteral("Redacted") : QStringLiteral("Includes identifiers"));
@@ -119,7 +133,7 @@ QString htmlReport(const QVariantMap &document)
 
 QString csvReport(const QVariantMap &document)
 {
-    QString out = QChar(0xfeff) + QStringLiteral("section,device,field,value,status,source\r\n");
+    QString out = QChar(0xfeff) + QStringLiteral("section,device,field,value,status,source,reason\r\n");
     for (const auto &row : reportRows(document)) {
         QStringList escaped;
         escaped.reserve(row.size());
@@ -139,8 +153,8 @@ QString markdownReport(const QVariantMap &document)
     out += document.value(QStringLiteral("redacted")).toBool()
                ? QStringLiteral("- Privacy: sensitive identifiers are redacted\n")
                : QStringLiteral("- Privacy: includes identifiers, not redacted\n");
-    out += QStringLiteral("\n| Section | Device | Field | Value | Status | Source |\n");
-    out += QStringLiteral("| --- | --- | --- | --- | --- | --- |\n");
+    out += QStringLiteral("\n| Section | Device | Field | Value | Status | Source | Reason |\n");
+    out += QStringLiteral("| --- | --- | --- | --- | --- | --- | --- |\n");
     for (const auto &row : reportRows(document)) {
         QStringList escaped;
         escaped.reserve(row.size());

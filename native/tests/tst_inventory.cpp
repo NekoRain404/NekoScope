@@ -383,9 +383,14 @@ private slots:
         QCOMPARE(size.value(QStringLiteral("value")).toString(), QStringLiteral("976.76 MiB"));
         QCOMPARE(size.value(QStringLiteral("rawValue")).toULongLong(), Q_UINT64_C(1024209408));
         QCOMPARE(fieldByKey(nvme, QStringLiteral("Namespace 1 block size")).value(QStringLiteral("value")).toString(), QStringLiteral("512"));
+        const auto wwid = fieldByKey(nvme, QStringLiteral("Namespace 1 WWID"));
+        QCOMPARE(wwid.value(QStringLiteral("value")).toString(), QStringLiteral("eui.1234"));
+        QVERIFY(wwid.value(QStringLiteral("sensitive")).toBool());
         QCOMPARE(fieldByKey(nvme, QStringLiteral("Temperature")).value(QStringLiteral("value")).toString(), QStringLiteral("38.0"));
-        QCOMPARE(fieldByKey(nvme, QStringLiteral("SMART / health")).value(QStringLiteral("status")).toString(), QStringLiteral("unavailable"));
-        QVERIFY(!fieldByKey(nvme, QStringLiteral("SMART / health")).value(QStringLiteral("reason")).toString().isEmpty());
+        const auto smart = fieldByKey(nvme, QStringLiteral("SMART / health"));
+        QCOMPARE(smart.value(QStringLiteral("status")).toString(), QStringLiteral("unavailable"));
+        QVERIFY(smart.contains(QStringLiteral("reason")));
+        QVERIFY(!smart.value(QStringLiteral("reason")).toString().isEmpty());
     }
 
     void nvmeMalformedNamespaceSizeIsReadError()
@@ -400,6 +405,8 @@ private slots:
         const auto size = fieldByKey(nvme, QStringLiteral("Namespace 1 size"));
         QCOMPARE(size.value(QStringLiteral("status")).toString(), QStringLiteral("read-error"));
         QCOMPARE(size.value(QStringLiteral("value")).toString(), QString());
+        QVERIFY(size.contains(QStringLiteral("reason")));
+        QVERIFY(!size.value(QStringLiteral("reason")).toString().isEmpty());
         QCOMPARE(fieldByKey(nvme, QStringLiteral("SMART / health")).value(QStringLiteral("status")).toString(), QStringLiteral("unavailable"));
     }
 

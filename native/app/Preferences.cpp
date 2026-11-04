@@ -9,7 +9,13 @@ Preferences::Preferences(const QString &path, QObject *parent)
 
 void Preferences::initialize()
 {
-    settings_.setValue("schemaVersion", 1);
+    // Only stamp the schema when the store has no version yet; future
+    // migrations must be driven by the value read here.
+    if (!settings_.contains("schemaVersion")) {
+        settings_.setValue("schemaVersion", schemaVersion_);
+        return;
+    }
+    schemaVersion_ = settings_.value("schemaVersion").toInt();
 }
 QString Preferences::theme() const
 {

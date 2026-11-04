@@ -31,6 +31,24 @@ private slots:
         QSettings settings(path, QSettings::IniFormat);
         QCOMPARE(settings.value("schemaVersion").toInt(), 1);
     }
+    void preservesExistingSchemaVersion()
+    {
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        const QString path = root.filePath("legacy.ini");
+        {
+            QSettings settings(path, QSettings::IniFormat);
+            settings.setValue("schemaVersion", 3);
+            settings.sync();
+        }
+        {
+            neko::Preferences prefs(path);
+            QCOMPARE(prefs.schemaVersion(), 3);
+            prefs.setTheme("dark");
+        }
+        QSettings settings(path, QSettings::IniFormat);
+        QCOMPARE(settings.value("schemaVersion").toInt(), 3);
+    }
 };
 QTEST_GUILESS_MAIN(PreferencesTest)
 #include "tst_preferences.moc"

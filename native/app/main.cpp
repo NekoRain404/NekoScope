@@ -103,7 +103,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("sensors", &sensors);
     engine.rootContext()->setContextProperty("testRunner", &tests);
     engine.rootContext()->setContextProperty("reports", &reports);
-    QObject::connect(&sensors, &neko::SensorService::temperatureObserved, &tests, &neko::TestRunner::checkTemperature);
+    QObject::connect(&sensors, &neko::SensorService::temperatureSampled, &tests, &neko::TestRunner::observeTemperature);
     int warnings = 0;
     QObject::connect(&engine, &QQmlEngine::warnings, &app, [&warnings](const QList<QQmlError> &errors) { warnings += errors.size(); });
     engine.load(QUrl("qrc:/qt/qml/NekoScope/Main.qml"));

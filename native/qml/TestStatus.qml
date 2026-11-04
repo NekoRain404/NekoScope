@@ -7,7 +7,11 @@ Panel {
     id: panel
     property string kind: "stress"
     readonly property bool relevant: testRunner.state.kind === kind
-    readonly property var runState: relevant ? testRunner.state : ({status: "idle", running: false, progress: 0, elapsed: 0, duration: 0, message: "", output: ""})
+    readonly property var runState: relevant ? testRunner.state : ({status: "idle", running: false, progress: 0, elapsed: 0, duration: 0, message: "", messageKey: "", messageParams: {}, output: ""})
+    readonly property string statusMessage: {
+        const translated = panel.ui.trKey(panel.runState.messageKey || "", panel.runState.messageParams, panel.runState.message || "")
+        return translated || panel.ui.t("等待测试启动。", "Waiting for a test to start.")
+    }
     readonly property color stateTone: panel.runState.status === "failed" || panel.runState.status === "thermal-stop" ? panel.ui.warning
                                            : panel.runState.status === "completed" ? panel.ui.green
                                            : panel.runState.running ? panel.ui.accent : panel.ui.secondary
@@ -123,7 +127,7 @@ Panel {
         font.weight: Font.DemiBold
     }
     Label {
-        text: panel.runState.message || panel.ui.t("等待测试启动。", "Waiting for a test to start.")
+        text: panel.statusMessage
         color: panel.runState.status === "failed" ? panel.ui.warning : panel.ui.secondary
         font.pixelSize: panel.ui.fontSmall
         wrapMode: Text.WordWrap

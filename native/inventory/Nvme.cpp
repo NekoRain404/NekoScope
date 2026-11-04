@@ -68,7 +68,8 @@ void Collector::appendNvme(InventorySnapshot &snapshot)
             fields.append(numericField(label + QStringLiteral(" block size"),
                                        nsPath + QStringLiteral("/queue/logical_block_size"),
                                        QStringLiteral("bytes")));
-            fields.append(textField(label + QStringLiteral(" WWID"), nsPath + QStringLiteral("/wwid")));
+            fields.append(textField(label + QStringLiteral(" WWID"), nsPath + QStringLiteral("/wwid"),
+                                    true));
         }
 
         // The nvme driver publishes its hwmon device beside the controller attributes.
