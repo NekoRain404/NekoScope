@@ -29,7 +29,8 @@ class TestRunner final : public QObject
 
 public:
     explicit TestRunner(QObject *parent = nullptr, QString stressNgPath = {},
-                        QString sysbenchPath = {}, QString procRoot = QStringLiteral("/proc"));
+                        QString sysbenchPath = {}, QString procRoot = QStringLiteral("/proc"),
+                        QString historyPath = {});
     ~TestRunner() override;
 
     QVariantMap state() const;
@@ -71,6 +72,8 @@ private:
     void finish(QString status, QString reason, int exitCode = -1,
                 QProcess::ExitStatus exitStatus = QProcess::CrashExit);
     QString findTool(const QString &name, const QString &overridePath) const;
+    void loadHistory();
+    void saveHistory() const;
 
     QProcess m_process;
     QFutureWatcher<TestCommand> m_preparation;
@@ -85,6 +88,7 @@ private:
     QString m_stressNgPath;
     QString m_sysbenchPath;
     QString m_procRoot;
+    QString m_historyPath;
     QString m_kind;
     QString m_type;
     QString m_output;

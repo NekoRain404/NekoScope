@@ -3,6 +3,8 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QScopeGuard>
 #include <QtTest>
@@ -20,6 +22,10 @@ bool writeFile(const QString &path, const QByteArray &contents)
     if (!QDir().mkpath(QFileInfo(path).absolutePath())) return false;
     QFile file(path);
     return file.open(QIODevice::WriteOnly | QIODevice::Truncate) && file.write(contents) == contents.size();
+}
+QString historyPath(const QTemporaryDir &dir)
+{
+    return dir.filePath(QStringLiteral("benchmark-history.json"));
 }
 QString fixture(QTemporaryDir &dir, const QByteArray &body, const QString &name = QStringLiteral("fixture"))
 {
@@ -97,11 +103,15 @@ private slots:
     }
     void missingToolIsRecordedWithoutScore()
     {
-        TestRunner runner(nullptr, "/nonexistent/stress-ng", "/nonexistent/sysbench");
+        QTemporaryDir dir;
+        TestRunner runner(nullptr, "/nonexistent/stress-ng", "/nonexistent/sysbench",
+                          QStringLiteral("/proc"), historyPath(dir));
         QVERIFY(!runner.startStress("cpu", 50, 2, 5, 256));
         QCOMPARE(runner.state().value("status").toString(), QStringLiteral("failed"));
         QCOMPARE(runner.history().size(), 1);
         QVERIFY(!runner.history().first().toMap().contains("score"));
+        QCOMPARE(runner.history().first().toMap().value("exit-status").toString(), QStringLiteral("not-started"));
+        QVERIFY(!runner.history().first().toMap().value("exit-code").isValid());
         QVERIFY(!runner.state().value("score").isValid());
     }
     void startupIsAsynchronousAndFailureFinishesOnce()
@@ -110,7 +120,7 @@ private slots:
         const auto path = dir.filePath("invalid-interpreter");
         QVERIFY(writeFile(path, "#!/no/such/interpreter\n"));
         QVERIFY(QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
-        TestRunner runner(nullptr, path, path);
+        TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), historyPath(dir));
         QSignalSpy historyChanged(&runner, &TestRunner::historyChanged);
         QVERIFY(runner.startBenchmark("single", 1));
         // FailedToStart is processed through the event loop, not waitForStarted.
@@ -120,13 +130,14 @@ private slots:
         QCOMPARE(runner.state().value("status").toString(), QStringLiteral("failed"));
         QCoreApplication::processEvents();
         QCOMPARE(historyChanged.count(), 1);
+        QCOMPARE(runner.history().first().toMap().value("exit-status").toString(), QStringLiteral("not-started"));
     }
     void busyRequestsDoNotChangeRunningState()
     {
         QTemporaryDir dir;
         const auto path = fixture(dir, "print('ready', flush=True)\ntime.sleep(30)\n");
         QVERIFY(!path.isEmpty());
-        TestRunner runner(nullptr, path, path);
+        TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), historyPath(dir));
         QVERIFY(runner.startBenchmark("single", 10));
         QTRY_VERIFY_WITH_TIMEOUT(runner.state().value("output").toString().contains("ready"), 3000);
         const auto previous = runner.state();
@@ -144,7 +155,7 @@ private slots:
     {
         QTemporaryDir dir;
         const auto path = fixture(dir, "print('locale=' + os.environ.get('LC_ALL', ''))\nprint('sysbench 1.0.20')\nprint('events per second: 1234.50')\n");
-        TestRunner runner(nullptr, path, path);
+        TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), historyPath(dir));
         QVERIFY(runner.startBenchmark("single", 1));
         QTRY_COMPARE_WITH_TIMEOUT(runner.history().size(), 1, 3000);
         const auto record = runner.history().first().toMap();
@@ -159,7 +170,7 @@ private slots:
     {
         QTemporaryDir dir;
         const auto path = fixture(dir, "print('events per second: 100')\nsys.exit(2)\n");
-        TestRunner runner(nullptr, path, path);
+        TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), historyPath(dir));
         QVERIFY(runner.startBenchmark("single", 1));
         QTRY_COMPARE_WITH_TIMEOUT(runner.history().size(), 1, 3000);
         QCOMPARE(runner.state().value("status").toString(), QStringLiteral("failed"));
@@ -170,7 +181,7 @@ private slots:
     {
         QTemporaryDir dir;
         const auto path = fixture(dir, "time.sleep(30)\n");
-        TestRunner runner(nullptr, path, path);
+        TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), historyPath(dir));
         QVERIFY(runner.startBenchmark("single", 10));
         QTRY_VERIFY_WITH_TIMEOUT(runner.state().value("elapsed").toInt() >= 1, 2500);
         QVERIFY(runner.state().value("progress").toInt() >= 10);
@@ -185,7 +196,7 @@ private slots:
         QByteArray body = "child = os.fork()\nif child == 0:\n    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n    time.sleep(30)\n    os._exit(0)\n";
         body += "open(" + QByteArray("'") + marker.toUtf8() + "', 'w').write(str(child))\nprint('ready', flush=True)\ntime.sleep(30)\n";
         const auto path = fixture(dir, body);
-        TestRunner runner(nullptr, path, path);
+        TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), historyPath(dir));
         QVERIFY(runner.startBenchmark("single", 10));
         QTRY_VERIFY_WITH_TIMEOUT(runner.state().value("output").toString().contains("ready"), 3000);
         QFile pidFile(marker);
@@ -207,7 +218,7 @@ private slots:
         const auto path = fixture(dir, "print('stress-ng version 0.17.00')\n");
         const auto proc = dir.filePath("proc");
         QVERIFY(writeFile(proc + "/meminfo", "MemAvailable: 614400 kB\n"));
-        TestRunner runner(nullptr, path, path, proc);
+        TestRunner runner(nullptr, path, path, proc, historyPath(dir));
         QVERIFY(runner.startStress("memory", 50, 2, 1, 512));
         QTRY_COMPARE_WITH_TIMEOUT(runner.history().size(), 1, 3000);
         const auto record = runner.history().first().toMap();
@@ -224,7 +235,7 @@ private slots:
         QByteArray body = "child = os.fork()\nif child == 0:\n    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n    time.sleep(30)\n    os._exit(0)\n";
         body += "open('" + marker.toUtf8() + "', 'w').write(str(child))\nprint('events per second: 10', flush=True)\ntime.sleep(0.1)\n";
         const auto path = fixture(dir, body);
-        TestRunner runner(nullptr, path, path);
+        TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), historyPath(dir));
         QVERIFY(runner.startBenchmark("single", 10));
         QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(marker), 3000);
         QFile pidFile(marker);
@@ -242,7 +253,7 @@ private slots:
     {
         QTemporaryDir dir;
         const auto path = fixture(dir, "print('must not launch')\n");
-        TestRunner runner(nullptr, path, path, dir.filePath("missing-proc"));
+        TestRunner runner(nullptr, path, path, dir.filePath("missing-proc"), historyPath(dir));
         QVERIFY(runner.startStress("memory", 50, 2, 1, 512));
         QTRY_COMPARE_WITH_TIMEOUT(runner.history().size(), 1, 3000);
         QCOMPARE(runner.state().value("status").toString(), QStringLiteral("failed"));
@@ -253,7 +264,7 @@ private slots:
     {
         QTemporaryDir dir;
         const auto path = fixture(dir, "print('ready', flush=True)\ntime.sleep(30)\n");
-        TestRunner runner(nullptr, path, path);
+        TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), historyPath(dir));
         QCOMPARE(runner.state().value("thermalProtection").toBool(), false);
         QCOMPARE(runner.state().value("thermalLimit").toDouble(), 90.0);
         runner.observeTemperature(true, 40.0);
@@ -276,7 +287,7 @@ private slots:
     {
         QTemporaryDir dir;
         const auto path = fixture(dir, "time.sleep(30)\n");
-        TestRunner runner(nullptr, path, path);
+        TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), historyPath(dir));
         runner.observeTemperature(true, 40.0);
         QVERIFY(runner.startBenchmark("single", 10));
         QTRY_COMPARE_WITH_TIMEOUT(runner.history().size(), 1, 5500);
@@ -288,7 +299,7 @@ private slots:
     {
         QTemporaryDir dir;
         const auto path = fixture(dir, "print('must not launch')\n");
-        TestRunner runner(nullptr, path, path);
+        TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), historyPath(dir));
         runner.observeTemperature(true, 95.0);
         QVERIFY(!runner.startBenchmark("single", 10));
         QCOMPARE(runner.history().size(), 1);
@@ -299,7 +310,7 @@ private slots:
     {
         QTemporaryDir dir;
         const auto path = fixture(dir, "print('events per second: 10')\n");
-        TestRunner runner(nullptr, path, path);
+        TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), historyPath(dir));
         runner.observeTemperature(true, 40.0);
         // No event processing: begin() itself must expire an old observation.
         QTest::qSleep(3100);
@@ -312,7 +323,7 @@ private slots:
     {
         QTemporaryDir dir;
         const auto path = fixture(dir, "time.sleep(30)\n");
-        TestRunner runner(nullptr, path, path);
+        TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), historyPath(dir));
         QVERIFY(runner.startStress("cpu", 50, 1, 1, 32));
         QTRY_COMPARE_WITH_TIMEOUT(runner.history().size(), 1, 5500);
         QCOMPARE(runner.state().value("status").toString(), QStringLiteral("failed"));
@@ -322,7 +333,7 @@ private slots:
     {
         QTemporaryDir dir;
         const auto path = fixture(dir, "print('events per second: 10')\n");
-        TestRunner runner(nullptr, path, path);
+        TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), historyPath(dir));
         QVERIFY(runner.startBenchmark("single", 1));
         runner.stop();
         QTRY_COMPARE_WITH_TIMEOUT(runner.history().size(), 1, 4000);
@@ -338,7 +349,7 @@ private slots:
         const auto path = fixture(dir, "time.sleep(30)\n");
         const auto proc = dir.filePath("proc");
         QVERIFY(writeFile(proc + "/meminfo", "MemAvailable: 614400 kB\n"));
-        TestRunner runner(nullptr, path, path, proc);
+        TestRunner runner(nullptr, path, path, proc, historyPath(dir));
         const auto connection = connect(&runner, &TestRunner::stateChanged, &runner, [&runner] {
             if (runner.state().value("status").toString() == QStringLiteral("starting")) runner.stop();
         });
@@ -358,7 +369,7 @@ private slots:
         QByteArray body = "child = os.fork()\nif child == 0:\n    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n    time.sleep(30)\n    os._exit(0)\n";
         body += "open('" + marker.toUtf8() + "', 'w').write(str(child))\nprint('ready', flush=True)\ntime.sleep(30)\n";
         const auto path = fixture(dir, body);
-        auto runner = std::make_unique<TestRunner>(nullptr, path, path);
+        auto runner = std::make_unique<TestRunner>(nullptr, path, path, QStringLiteral("/proc"), historyPath(dir));
         QVERIFY(runner->startBenchmark("single", 10));
         QTRY_VERIFY_WITH_TIMEOUT(runner->state().value("output").toString().contains("ready"), 3000);
         QFile pidFile(marker);
@@ -371,6 +382,159 @@ private slots:
 #else
         QSKIP("Linux process group test");
 #endif
+    }
+
+    void historyPersistsCompletedAttempt()
+    {
+        QTemporaryDir dir;
+        const auto history = historyPath(dir);
+        const auto path = fixture(dir, "print('sysbench 1.0.20')\nprint('events per second: 999.50')\n");
+        QVERIFY(!path.isEmpty());
+        {
+            TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), history);
+            QVERIFY(runner.startBenchmark("single", 1));
+            QTRY_COMPARE_WITH_TIMEOUT(runner.history().size(), 1, 3000);
+            QCOMPARE(runner.history().first().toMap().value("status").toString(),
+                     QStringLiteral("completed"));
+        }
+        QVERIFY(QFileInfo::exists(history));
+        TestRunner restored(nullptr, path, path, QStringLiteral("/proc"), history);
+        QCOMPARE(restored.history().size(), 1);
+        const auto record = restored.history().first().toMap();
+        QCOMPARE(record.value("status").toString(), QStringLiteral("completed"));
+        QCOMPARE(record.value("score").toDouble(), 999.5);
+        QCOMPARE(record.value("unit").toString(), QStringLiteral("events/s"));
+        QCOMPARE(record.value("program").toString(), path);
+        QVERIFY(record.value("arguments").toStringList().contains("--time=1"));
+        QCOMPARE(record.value("exit-status").toString(), QStringLiteral("normal"));
+    }
+    void historyPersistsFailedAttempt()
+    {
+        QTemporaryDir dir;
+        const auto history = historyPath(dir);
+        {
+            TestRunner runner(nullptr, "/nonexistent/stress-ng", "/nonexistent/sysbench",
+                              QStringLiteral("/proc"), history);
+            QVERIFY(!runner.startStress("cpu", 50, 1, 1, 32));
+            QCOMPARE(runner.history().size(), 1);
+            QCOMPARE(runner.history().first().toMap().value("status").toString(),
+                     QStringLiteral("failed"));
+        }
+        TestRunner restored(nullptr, "/nonexistent/stress-ng", "/nonexistent/sysbench",
+                            QStringLiteral("/proc"), history);
+        QCOMPARE(restored.history().size(), 1);
+        QCOMPARE(restored.history().first().toMap().value("status").toString(),
+                 QStringLiteral("failed"));
+        QVERIFY(!restored.history().first().toMap().contains("score"));
+    }
+    void missingHistoryFileIsIgnoredAndCreatedOnFinish()
+    {
+        QTemporaryDir dir;
+        const auto history = dir.filePath("nested/benchmark-history.json");
+        {
+            TestRunner runner(nullptr, "/nonexistent/stress-ng", "/nonexistent/sysbench",
+                              QStringLiteral("/proc"), history);
+            QVERIFY(runner.history().isEmpty());
+            QVERIFY(!runner.startStress("cpu", 50, 1, 1, 32));
+        }
+        QVERIFY(QFileInfo::exists(history));
+        TestRunner restored(nullptr, "/nonexistent/stress-ng", "/nonexistent/sysbench",
+                            QStringLiteral("/proc"), history);
+        QCOMPARE(restored.history().size(), 1);
+        QCOMPARE(restored.history().first().toMap().value("status").toString(),
+                 QStringLiteral("failed"));
+    }
+    void corruptHistoryFileIsIgnored()
+    {
+        QTemporaryDir dir;
+        const auto history = historyPath(dir);
+        QVERIFY(writeFile(history, "{ this is not valid json"));
+        TestRunner runner(nullptr, "", "", QStringLiteral("/proc"), history);
+        QVERIFY(runner.history().isEmpty());
+    }
+    void wrongHistoryRootTypeIsIgnored()
+    {
+        QTemporaryDir dir;
+        const auto history = historyPath(dir);
+        QVERIFY(writeFile(history, R"({"entries":[{"kind":"benchmark","status":"completed"}]})"));
+        {
+            TestRunner runner(nullptr, "", "", QStringLiteral("/proc"), history);
+            QVERIFY(runner.history().isEmpty());
+        }
+        QVERIFY(writeFile(history, R"("not an array")"));
+        {
+            TestRunner runner(nullptr, "", "", QStringLiteral("/proc"), history);
+            QVERIFY(runner.history().isEmpty());
+        }
+    }
+    void historyLoadDropsInvalidEntriesAndPreservesUnknownFields()
+    {
+        QTemporaryDir dir;
+        const auto history = historyPath(dir);
+        const QVariantList entries{
+            QVariantMap{{"kind", "benchmark"}, {"status", "completed"},
+                        {"custom-note", "keep"}, {"extra", QVariantMap{{"nested", 42}}}},
+            QVariant(42),
+            QVariantMap{{"kind", "benchmark"}},
+            QVariantMap{{"status", "completed"}},
+            QVariantMap{{"kind", 7}, {"status", "completed"}},
+            QVariantMap{{"kind", "benchmark"}, {"status", ""}}};
+        QVERIFY(writeFile(history, QJsonDocument(QJsonArray::fromVariantList(entries)).toJson()));
+        TestRunner runner(nullptr, "", "", QStringLiteral("/proc"), history);
+        QCOMPARE(runner.history().size(), 1);
+        const auto record = runner.history().first().toMap();
+        QCOMPARE(record.value("custom-note").toString(), QStringLiteral("keep"));
+        QCOMPARE(record.value("extra").toMap().value("nested").toInt(), 42);
+    }
+    void historyLoadIsBoundedToNewestHundred()
+    {
+        QTemporaryDir dir;
+        const auto history = historyPath(dir);
+        QVariantList entries;
+        for (int i = 0; i < 150; ++i)
+            entries.append(QVariantMap{{"kind", "benchmark"}, {"status", "completed"}, {"index", i}});
+        QVERIFY(writeFile(history, QJsonDocument(QJsonArray::fromVariantList(entries)).toJson()));
+        TestRunner runner(nullptr, "", "", QStringLiteral("/proc"), history);
+        QCOMPARE(runner.history().size(), 100);
+        QCOMPARE(runner.history().first().toMap().value("index").toInt(), 0);
+        QCOMPARE(runner.history().last().toMap().value("index").toInt(), 99);
+    }
+    void finishedAttemptKeepsHistoryBounded()
+    {
+        QTemporaryDir dir;
+        const auto history = historyPath(dir);
+        QVariantList entries;
+        for (int i = 0; i < 100; ++i)
+            entries.append(QVariantMap{{"kind", "benchmark"}, {"status", "completed"}, {"index", i}});
+        QVERIFY(writeFile(history, QJsonDocument(QJsonArray::fromVariantList(entries)).toJson()));
+        const auto path = fixture(dir, "print('events per second: 10')\n");
+        QVERIFY(!path.isEmpty());
+        TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), history);
+        QCOMPARE(runner.history().size(), 100);
+        QVERIFY(runner.startBenchmark("single", 1));
+        // Loaded entries are already completed, so wait for the new record instead.
+        QTRY_VERIFY_WITH_TIMEOUT(runner.history().first().toMap().contains("started-at"), 3000);
+        QCOMPARE(runner.history().size(), 100);
+        QCOMPARE(runner.history().first().toMap().value("status").toString(),
+                 QStringLiteral("completed"));
+        QCOMPARE(runner.history().last().toMap().value("index").toInt(), 98);
+    }
+    void inProgressAttemptIsNotPersisted()
+    {
+        QTemporaryDir dir;
+        const auto history = historyPath(dir);
+        const auto path = fixture(dir, "print('ready', flush=True)\ntime.sleep(30)\n");
+        QVERIFY(!path.isEmpty());
+        TestRunner runner(nullptr, path, path, QStringLiteral("/proc"), history);
+        QVERIFY(runner.startBenchmark("single", 10));
+        QTRY_VERIFY_WITH_TIMEOUT(runner.state().value("output").toString().contains("ready"), 3000);
+        QVERIFY(runner.history().isEmpty());
+        QVERIFY(!QFileInfo::exists(history));
+        runner.stop();
+        QTRY_COMPARE_WITH_TIMEOUT(runner.history().size(), 1, 4000);
+        QVERIFY(QFileInfo::exists(history));
+        QCOMPARE(runner.history().first().toMap().value("status").toString(),
+                 QStringLiteral("cancelled"));
     }
 
 };

@@ -4,8 +4,13 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QSysInfo>
 #include <QThread>
@@ -30,6 +35,8 @@ constexpr int kMinimumLoadPercent = 10;
 constexpr int kKillGraceMs = 1500;
 constexpr int kThermalFreshnessMs = 3000;
 constexpr double kThermalLimit = 90.0;
+constexpr qsizetype kHistoryLimit = 100;
+constexpr auto kHistoryFileName = "benchmark-history.json";
 
 qint64 availableMemoryMiB(const QString &procRoot)
 {
@@ -54,11 +61,19 @@ QString toolVersion(const QString &output)
 }
 }
 
-TestRunner::TestRunner(QObject *parent, QString stressNgPath, QString sysbenchPath, QString procRoot)
+TestRunner::TestRunner(QObject *parent, QString stressNgPath, QString sysbenchPath, QString procRoot,
+                       QString historyPath)
     : QObject(parent), m_process(this), m_preparation(this), m_killTimer(this),
       m_timeoutTimer(this), m_progressTimer(this), m_stressNgPath(std::move(stressNgPath)),
-      m_sysbenchPath(std::move(sysbenchPath)), m_procRoot(std::move(procRoot))
+      m_sysbenchPath(std::move(sysbenchPath)), m_procRoot(std::move(procRoot)),
+      m_historyPath(std::move(historyPath))
 {
+    if (m_historyPath.isEmpty()) {
+        const auto configDir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+        if (!configDir.isEmpty())
+            m_historyPath = QDir(configDir).filePath(QString::fromLatin1(kHistoryFileName));
+    }
+    loadHistory();
     m_state = {{"running", false}, {"kind", QString()}, {"type", QString()},
                {"status", QStringLiteral("idle")}, {"memory-mib", 0}, {"progress", 0},
                {"elapsed", 0}, {"duration", 0}, {"load", 0}, {"threads", 0},
@@ -155,6 +170,46 @@ QString TestRunner::findTool(const QString &name, const QString &overridePath) c
     }
     return QStandardPaths::findExecutable(name);
 }
+
+void TestRunner::loadHistory()
+{
+    m_history.clear();
+    if (m_historyPath.isEmpty()) return;
+    QFile file(m_historyPath);
+    if (!file.open(QIODevice::ReadOnly)) return;
+    QJsonParseError error;
+    const auto document = QJsonDocument::fromJson(file.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isArray()) return;
+    for (const auto &value : document.array()) {
+        if (!value.isObject()) continue;
+        const auto entry = value.toObject().toVariantMap();
+        const auto kind = entry.value(QStringLiteral("kind"));
+        const auto status = entry.value(QStringLiteral("status"));
+        // Reject malformed roots, but keep unknown fields so older or newer records
+        // round-trip without losing any key.
+        if (kind.metaType().id() != QMetaType::QString || kind.toString().isEmpty()) continue;
+        if (status.metaType().id() != QMetaType::QString || status.toString().isEmpty()) continue;
+        m_history.append(entry);
+        if (m_history.size() >= kHistoryLimit) break;
+    }
+}
+
+void TestRunner::saveHistory() const
+{
+    if (m_historyPath.isEmpty()) return;
+    QDir().mkpath(QFileInfo(m_historyPath).absolutePath());
+    QJsonArray entries;
+    for (const auto &entry : m_history) entries.append(QJsonValue::fromVariant(entry));
+    const auto bytes = QJsonDocument(entries).toJson(QJsonDocument::Indented);
+    QSaveFile file(m_historyPath);
+    if (!file.open(QIODevice::WriteOnly)) return;
+    if (file.write(bytes) != bytes.size()) {
+        file.cancelWriting();
+        return;
+    }
+    file.commit();
+}
+
 TestCommand TestRunner::stressCommand(const QString &mode, int load, int threads, int duration,
                                       int memoryMiB, qint64 availableMiB, int idealThreads)
 {
@@ -527,7 +582,9 @@ void TestRunner::finish(QString status, QString reason, int exitCode, QProcess::
                        {"memory-mib", m_state.value("memory-mib")}, {"engine", m_state.value("engine")},
                        {"program", m_state.value("program")}, {"arguments", m_state.value("arguments")},
                        {"version", version}, {"version-status", version.isEmpty() ? QStringLiteral("unavailable") : QStringLiteral("available")},
-                       {"exit-code", exitCode}, {"exit-status", exitStatus == QProcess::NormalExit ? QStringLiteral("normal") : QStringLiteral("crash")},
+                       {"exit-code", m_rootFinished ? QVariant(exitCode) : QVariant()},
+                       {"exit-status", !m_rootFinished ? QStringLiteral("not-started") :
+                                           exitStatus == QProcess::NormalExit ? QStringLiteral("normal") : QStringLiteral("crash")},
                        {"output", m_output}, {"system", QSysInfo::prettyProductName()}, {"kernel", QSysInfo::kernelVersion()},
                        {"thermalProtection", m_state.value("thermalProtection")}, {"thermalLimit", kThermalLimit}};
     if (status == QStringLiteral("completed") && m_state.value("score").isValid()) {
@@ -535,7 +592,8 @@ void TestRunner::finish(QString status, QString reason, int exitCode, QProcess::
         record.insert("unit", m_state.value("unit"));
     }
     m_history.prepend(record);
-    if (m_history.size() > 100) m_history.removeLast();
+    if (m_history.size() > kHistoryLimit) m_history.removeLast();
+    saveHistory();
     emit stateChanged();
     emit historyChanged();
     emit message(reason);

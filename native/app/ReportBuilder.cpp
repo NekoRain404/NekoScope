@@ -46,6 +46,109 @@ QString csvCell(QString value)
     value.replace('"', "\"\"");
     return '"' + value + '"';
 }
+// Markdown table cells cannot contain raw pipes, line breaks or unescaped inline HTML.
+QString markdownCell(QString value)
+{
+    value.replace(QStringLiteral("\\"), QStringLiteral("\\\\"));
+    value.replace(QStringLiteral("&"), QStringLiteral("&amp;"));
+    value.replace(QStringLiteral("<"), QStringLiteral("&lt;"));
+    value.replace(QStringLiteral(">"), QStringLiteral("&gt;"));
+    value.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    value.replace(QChar('\r'), QChar('\n'));
+    value.replace(QChar('\n'), QStringLiteral("<br>"));
+    value.replace(QStringLiteral("|"), QStringLiteral("\\|"));
+    return value;
+}
+
+using ReportRow = QStringList;
+
+// All three table formats share the same section/device/field/value/status/source rows.
+QList<ReportRow> reportRows(const QVariantMap &document)
+{
+    QList<ReportRow> rows;
+    const auto system = document.value(QStringLiteral("system")).toMap();
+    for (auto it = system.cbegin(); it != system.cend(); ++it) {
+        rows.append({QStringLiteral("System"), QString(), it.key(), textValue(it.value()),
+                     QString(), QString()});
+    }
+    for (const auto &entry : document.value(QStringLiteral("devices")).toList()) {
+        const auto device = entry.toMap();
+        for (const auto &fieldValue : device.value(QStringLiteral("fields")).toList()) {
+            const auto field = fieldValue.toMap();
+            rows.append({device.value(QStringLiteral("category")).toString(),
+                         device.value(QStringLiteral("name")).toString(),
+                         field.value(QStringLiteral("key")).toString(),
+                         textValue(field.value(QStringLiteral("value"))),
+                         field.value(QStringLiteral("status")).toString(),
+                         field.value(QStringLiteral("source")).toString()});
+        }
+    }
+    for (const auto &entry : document.value(QStringLiteral("sensors")).toList()) {
+        const auto sensor = entry.toMap();
+        rows.append({QStringLiteral("Sensor"), sensor.value(QStringLiteral("group")).toString(),
+                     sensor.value(QStringLiteral("name")).toString(),
+                     textValue(sensor.value(QStringLiteral("value"))) + QLatin1Char(' ') +
+                         sensor.value(QStringLiteral("unit")).toString(),
+                     sensor.value(QStringLiteral("status")).toString(),
+                     sensor.value(QStringLiteral("source")).toString()});
+    }
+    for (const auto &entry : document.value(QStringLiteral("tests")).toList()) {
+        const auto test = entry.toMap();
+        rows.append({QStringLiteral("Test"), test.value(QStringLiteral("kind")).toString(),
+                     test.value(QStringLiteral("type")).toString(), textValue(test),
+                     test.value(QStringLiteral("status")).toString(),
+                     test.value(QStringLiteral("engine")).toString()});
+    }
+    return rows;
+}
+
+QString htmlReport(const QVariantMap &document)
+{
+    QString out = QStringLiteral("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>NekoScope report</title><style>body{font:14px system-ui;max-width:1100px;margin:40px auto;padding:20px;color:#272435}table{border-collapse:collapse;width:100%;margin:20px 0}td,th{padding:10px;text-align:left;border-bottom:1px solid #ddd;overflow-wrap:anywhere}pre{white-space:pre-wrap}</style><body><h1>NekoScope</h1><p>Real hardware snapshot · %1 · %2</p><table><thead><tr><th>Section</th><th>Device</th><th>Field</th><th>Value</th><th>Status</th><th>Source</th></tr></thead><tbody>")
+        .arg(document.value(QStringLiteral("generatedAt")).toString().toHtmlEscaped(),
+             document.value(QStringLiteral("redacted")).toBool()
+                 ? QStringLiteral("Redacted") : QStringLiteral("Includes identifiers"));
+    for (const auto &row : reportRows(document)) {
+        out += QStringLiteral("<tr>");
+        for (const auto &cell : row) out += QStringLiteral("<td>") + cell.toHtmlEscaped() + QStringLiteral("</td>");
+        out += QStringLiteral("</tr>\n");
+    }
+    out += QStringLiteral("</tbody></table></body></html>");
+    return out;
+}
+
+QString csvReport(const QVariantMap &document)
+{
+    QString out = QChar(0xfeff) + QStringLiteral("section,device,field,value,status,source\r\n");
+    for (const auto &row : reportRows(document)) {
+        QStringList escaped;
+        escaped.reserve(row.size());
+        for (const auto &cell : row) escaped.append(csvCell(cell));
+        out += escaped.join(QLatin1Char(',')) + QStringLiteral("\r\n");
+    }
+    return out;
+}
+
+QString markdownReport(const QVariantMap &document)
+{
+    QString out = QStringLiteral("# NekoScope hardware report\n\n");
+    out += QStringLiteral("- Collected: %1\n")
+               .arg(document.value(QStringLiteral("generatedAt")).toString());
+    out += QStringLiteral("- Data mode: %1\n")
+               .arg(document.value(QStringLiteral("dataMode")).toString());
+    out += document.value(QStringLiteral("redacted")).toBool()
+               ? QStringLiteral("- Privacy: sensitive identifiers are redacted\n")
+               : QStringLiteral("- Privacy: includes identifiers, not redacted\n");
+    out += QStringLiteral("\n| Section | Device | Field | Value | Status | Source |\n");
+    out += QStringLiteral("| --- | --- | --- | --- | --- | --- |\n");
+    for (const auto &row : reportRows(document)) {
+        QStringList escaped;
+        escaped.reserve(row.size());
+        for (const auto &cell : row) escaped.append(markdownCell(cell));
+        out += QStringLiteral("| ") + escaped.join(QStringLiteral(" | ")) + QStringLiteral(" |\n");
+    }
+    return out;
+}
 }
 QVariantMap ReportBuilder::document(const QVariantMap &system, const QVariantList &devices,
                                    const QVariantList &sensors, const QVariantList &history,
@@ -64,44 +167,12 @@ QVariantMap ReportBuilder::document(const QVariantMap &system, const QVariantLis
 }
 QString ReportBuilder::serialize(const QVariantMap &document, const QString &format)
 {
-    if (format == "json") return QString::fromUtf8(QJsonDocument::fromVariant(document).toJson(QJsonDocument::Indented));
-    if (format != "html" && format != "csv") return {};
-    QString out = format == "html"
-        ? QStringLiteral("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>NekoScope report</title><style>body{font:14px system-ui;max-width:1100px;margin:40px auto;padding:20px;color:#272435}table{border-collapse:collapse;width:100%;margin:20px 0}td,th{padding:10px;text-align:left;border-bottom:1px solid #ddd;overflow-wrap:anywhere}pre{white-space:pre-wrap}</style><body><h1>NekoScope</h1><p>Real hardware snapshot · %1 · %2</p><table><thead><tr><th>Section</th><th>Device</th><th>Field</th><th>Value</th><th>Status</th><th>Source</th></tr></thead><tbody>")
-            .arg(document.value("generatedAt").toString().toHtmlEscaped(), document.value("redacted").toBool() ? "Redacted" : "Includes identifiers")
-        : QStringLiteral("\xEF\xBB\xBF");
-    if (format == "csv") out = QChar(0xfeff) + QStringLiteral("section,device,field,value,status,source\r\n");
-    auto row = [&](const QStringList &cells) {
-        if (format == "html") {
-            out += "<tr>";
-            for (const auto &cell : cells) out += "<td>" + cell.toHtmlEscaped() + "</td>";
-            out += "</tr>\n";
-        } else {
-            QStringList escaped;
-            for (const auto &cell : cells) escaped.append(csvCell(cell));
-            out += escaped.join(',') + "\r\n";
-        }
-    };
-    const auto system = document.value("system").toMap();
-    for (auto it = system.cbegin(); it != system.cend(); ++it) row({"System", "", it.key(), textValue(it.value()), "", ""});
-    for (const auto &entry : document.value("devices").toList()) {
-        const auto device = entry.toMap();
-        for (const auto &fieldValue : device.value("fields").toList()) {
-            const auto field = fieldValue.toMap();
-            row({device.value("category").toString(), device.value("name").toString(), field.value("key").toString(),
-                 textValue(field.value("value")), field.value("status").toString(), field.value("source").toString()});
-        }
-    }
-    for (const auto &entry : document.value("sensors").toList()) {
-        const auto sensor = entry.toMap();
-        row({"Sensor", sensor.value("group").toString(), sensor.value("name").toString(),
-             textValue(sensor.value("value")) + ' ' + sensor.value("unit").toString(), sensor.value("status").toString(), sensor.value("source").toString()});
-    }
-    for (const auto &entry : document.value("tests").toList()) {
-        const auto test = entry.toMap();
-        row({"Test", test.value("kind").toString(), test.value("type").toString(), textValue(test), test.value("status").toString(), test.value("engine").toString()});
-    }
-    if (format == "html") out += "</tbody></table></body></html>";
-    return out;
+    if (format == QStringLiteral("json"))
+        return QString::fromUtf8(QJsonDocument::fromVariant(document).toJson(QJsonDocument::Indented));
+    if (format == QStringLiteral("html")) return htmlReport(document);
+    if (format == QStringLiteral("csv")) return csvReport(document);
+    if (format == QStringLiteral("markdown") || format == QStringLiteral("md"))
+        return markdownReport(document);
+    return {};
 }
 }
