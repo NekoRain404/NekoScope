@@ -12,31 +12,67 @@ Button {
     property bool compact: false
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
-    padding: compact ? 9 : 12
-    leftPadding: compact ? 12 : 16
+    padding: compact ? ui.space2 : ui.space3
+    leftPadding: compact ? ui.space3 : ui.space4
     rightPadding: leftPadding
-    implicitHeight: compact ? 34 : 40
-    font.pixelSize: 12
+    implicitHeight: compact ? ui.controlHeightCompact : ui.controlHeight
+    font.pixelSize: ui.fontBody
+    font.weight: primary ? Font.DemiBold : Font.Medium
     Accessible.name: text
     opacity: enabled ? 1 : 0.42
     contentItem: RowLayout {
-        spacing: 8
-        Icon { visible: control.symbol !== ""; name: control.symbol; color: label.color; implicitWidth: 16; implicitHeight: 16 }
+        spacing: ui.space2
+        Icon {
+            visible: control.symbol !== ""
+            name: control.symbol
+            color: label.color
+            implicitWidth: 16
+            implicitHeight: 16
+        }
         Label {
             id: label
             text: control.text
-            color: control.primary ? "white" : (control.danger ? control.ui.warning : control.ui.text)
+            color: control.primary ? control.ui.accentText
+                 : control.danger ? control.ui.danger
+                 : control.ui.text
             font: control.font
             horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
             Layout.fillWidth: true
         }
     }
     background: Rectangle {
-        radius: 8
-        color: control.primary ? control.ui.accent : (control.hovered ? control.ui.soft : control.ui.panel)
-        border.color: control.activeFocus ? control.ui.accent : (control.primary ? "transparent" : control.ui.border)
-        border.width: control.activeFocus ? 2 : 1
-        opacity: control.down ? 0.7 : 1
-        Behavior on color { ColorAnimation { duration: control.ui.reducedMotion ? 0 : 120 } }
+        id: surface
+        radius: control.ui.radiusMd
+        color: control.primary
+             ? control.down ? Qt.darker(control.ui.accent, 1.16)
+             : control.hovered ? Qt.lighter(control.ui.accent, 1.08)
+             : control.ui.accent
+             : control.danger
+             ? control.down ? Qt.darker(control.ui.dangerSoft, 1.08)
+             : control.hovered ? control.ui.dangerSoft
+             : control.ui.panel
+             : control.down ? Qt.darker(control.ui.soft, 1.06)
+             : control.hovered ? control.ui.soft
+             : control.ui.panel
+        border.width: control.ui.borderWidth
+        border.color: control.primary
+                    ? control.hovered ? Qt.lighter(control.ui.accent, 1.30) : "transparent"
+                    : control.danger
+                    ? control.hovered || control.down ? control.ui.danger : control.ui.border
+                    : control.hovered ? control.ui.borderStrong : control.ui.border
+        Behavior on color { ColorAnimation { duration: control.ui.durationFast } }
+        Behavior on border.color { ColorAnimation { duration: control.ui.durationFast } }
+        // Offset focus-visible ring, so primary accent fills still show keyboard focus.
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: -3
+            radius: surface.radius + 3
+            color: "transparent"
+            border.width: control.ui.focusWidth
+            border.color: control.ui.focusRing
+            visible: control.visualFocus && control.enabled
+        }
     }
 }

@@ -11,14 +11,40 @@ RowLayout {
     property string eyebrow: "NEKOSCOPE / INSIGHTS"
     default property alias actions: actionsRow.data
     Layout.fillWidth: true
-    Layout.bottomMargin: 4
-    spacing: 16
+    Layout.bottomMargin: ui.space2
+    spacing: ui.space5
     ColumnLayout {
         Layout.fillWidth: true
-        spacing: 7
-        Label { text: header.eyebrow; color: header.ui.muted; font.pixelSize: 10; font.letterSpacing: 1.5 }
-        Label { text: header.title; color: header.ui.text; font.pixelSize: 27; font.weight: Font.DemiBold }
-        Label { text: header.description; color: header.ui.secondary; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+        spacing: ui.space2
+        Label {
+            text: header.eyebrow
+            visible: text !== ""
+            color: header.ui.muted
+            font.pixelSize: header.ui.fontCaption
+            font.weight: Font.Medium
+            font.letterSpacing: 1.5
+        }
+        Label {
+            text: header.title
+            color: header.ui.text
+            font.pixelSize: header.ui.fontDisplay
+            font.weight: Font.DemiBold
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
+        Label {
+            text: header.description
+            visible: text !== ""
+            color: header.ui.secondary
+            font.pixelSize: header.ui.fontBody
+            lineHeight: 1.3
+            wrapMode: Text.WordWrap
+            Layout.fillWidth: true
+        }
     }
-    RowLayout { id: actionsRow; spacing: 8 }
+    RowLayout {
+        id: actionsRow
+        spacing: header.ui.space2
+        Layout.alignment: Qt.AlignTop
+    }
 }

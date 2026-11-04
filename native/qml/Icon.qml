@@ -6,6 +6,7 @@ Item {
     id: icon
     property string name: "overview"
     property color color: "#aaa4c2"
+    property real strokeWidth: 1.6
     implicitWidth: 20
     implicitHeight: 20
     readonly property var paths: ({
@@ -21,18 +22,27 @@ Item {
         "check": "M5 12L10 17L20 6",
         "star": "M12 2L15 8L22 9L17 14L18 21L12 18L6 21L7 14L2 9L9 8Z",
         "sun": "M8 12A4 4 0 1 0 16 12A4 4 0 1 0 8 12 M12 1V4 M12 20V23 M1 12H4 M20 12H23 M4 4L6 6 M18 18L20 20 M4 20L6 18 M18 6L20 4",
+        "moon": "M20 14A8 8 0 0 1 10 4A8 8 0 1 0 20 14Z",
         "search": "M3 10A7 7 0 1 0 17 10A7 7 0 1 0 3 10 M15 15L22 22",
         "info": "M2 12A10 10 0 1 0 22 12A10 10 0 1 0 2 12 M12 11V17 M12 7V8",
+        "warning": "M12 3L22 20H2Z M12 9V14 M12 17V18",
+        "clock": "M2 12A10 10 0 1 0 22 12A10 10 0 1 0 2 12 M12 6V12L16 15",
+        "copy": "M8 8H20V20H8Z M4 16V4H16",
+        "chevronDown": "M6 9L12 15L18 9",
+        "chevronUp": "M6 15L12 9L18 15",
+        "pause": "M8 5V19 M16 5V19",
         "stop": "M5 5H19V19H5Z",
         "play": "M7 3L21 12L7 21Z"
     })
     Shape {
-        width: 24; height: 24
+        width: 24
+        height: 24
         scale: Math.min(icon.width, icon.height) / 24
         transformOrigin: Item.TopLeft
+        antialiasing: true
         ShapePath {
             strokeColor: icon.color
-            strokeWidth: 1.6
+            strokeWidth: icon.strokeWidth
             fillColor: "transparent"
             capStyle: ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin

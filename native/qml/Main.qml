@@ -13,8 +13,8 @@ ApplicationWindow {
     visible: true
     title: "NekoScope"
     color: theme.background
-    font.family: "Noto Sans"
-    font.pixelSize: 13
+    font.family: theme.fontFamily
+    font.pixelSize: theme.fontBody
     property int currentPage: 0
     property alias ui: theme
     readonly property var pageNames: [theme.t("系统概览", "Overview"), theme.t("硬件信息", "Hardware"), theme.t("实时传感器", "Sensors"), theme.t("压力测试", "Stress test"), theme.t("基准测试", "Benchmarks"), theme.t("系统报告", "Reports"), theme.t("偏好设置", "Preferences")]
@@ -29,7 +29,7 @@ ApplicationWindow {
         button: theme.soft
         buttonText: theme.text
         highlight: theme.accent
-        highlightedText: "white"
+        highlightedText: theme.accentText
         placeholderText: theme.muted
         mid: theme.border
         dark: theme.border
@@ -43,112 +43,251 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+6"; onActivated: app.navigateTo(5) }
     Shortcut { sequence: "Ctrl+,"; onActivated: app.navigateTo(6) }
     Shortcut { sequence: "F5"; onActivated: hardware.refresh() }
+
     Rectangle {
         id: sidebar
         width: app.width > 1200 ? 224 : 198
         anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-        color: "#222232"
+        gradient: Gradient {
+            GradientStop { position: 0; color: theme.sidebarTop }
+            GradientStop { position: 1; color: theme.sidebarBottom }
+        }
+        Rectangle {
+            anchors { right: parent.right; top: parent.top; bottom: parent.bottom }
+            width: theme.borderWidth
+            color: theme.sidebarBorder
+        }
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 18
-            spacing: 8
+            anchors.leftMargin: theme.space4
+            anchors.rightMargin: theme.space4
+            anchors.topMargin: theme.space5
+            anchors.bottomMargin: theme.space4
+            spacing: theme.space1
             RowLayout {
-                Layout.topMargin: 14; Layout.bottomMargin: 33; Layout.leftMargin: 7
-                spacing: 11
+                Layout.topMargin: theme.space2
+                Layout.bottomMargin: theme.space6
+                Layout.leftMargin: theme.space2
+                spacing: theme.space3
                 Rectangle {
-                    implicitWidth: 32; implicitHeight: 32; radius: 10; color: theme.accent
-                    Icon { anchors.centerIn: parent; name: "sensors"; color: "white"; width: 22; height: 22 }
+                    implicitWidth: 34
+                    implicitHeight: 34
+                    radius: theme.radiusMd + 2
+                    color: theme.accent
+                    Icon {
+                        anchors.centerIn: parent
+                        name: "sensors"
+                        color: theme.accentText
+                        implicitWidth: 22
+                        implicitHeight: 22
+                    }
                 }
                 Column {
-                    spacing: 2
-                    Label { text: "NekoScope"; color: "#f3f1ff"; font.pixelSize: 21; font.weight: Font.DemiBold }
-                    Label { text: "HARDWARE INSIGHTS"; color: "#9290a8"; font.pixelSize: 8; font.letterSpacing: 1.5 }
+                    spacing: 1
+                    Label {
+                        text: "NekoScope"
+                        color: theme.sidebarTextStrong
+                        font.pixelSize: theme.fontHeading
+                        font.weight: Font.DemiBold
+                    }
+                    Label {
+                        text: "HARDWARE INSIGHTS"
+                        color: theme.sidebarMuted
+                        font.pixelSize: theme.fontMicro
+                        font.letterSpacing: 1.6
+                    }
                 }
             }
-            Label { text: theme.t("工作空间", "WORKSPACE"); color: "#77768f"; font.pixelSize: 9; font.letterSpacing: 1.5; Layout.leftMargin: 13; Layout.bottomMargin: 9 }
+            Label {
+                text: theme.t("工作空间", "WORKSPACE")
+                color: theme.sidebarMuted
+                font.pixelSize: theme.fontMicro
+                font.weight: Font.Medium
+                font.letterSpacing: 1.5
+                Layout.leftMargin: theme.space3
+                Layout.bottomMargin: theme.space3
+            }
             Repeater {
                 model: 6
-                delegate: Button {
+                delegate: NavItem {
                     id: nav
                     required property int index
+                    ui: theme
                     objectName: "nav" + index
                     Layout.fillWidth: true
-                    implicitHeight: 44
-                    text: app.pageNames[index]
-                    hoverEnabled: true
-                    Accessible.name: text
-                    onClicked: app.navigateTo(index)
-                    contentItem: RowLayout {
-                        spacing: 12
-                        Icon { name: ["overview", "hardware", "sensors", "stress", "benchmark", "report"][nav.index]; color: app.currentPage === nav.index ? "#d3c7ff" : "#a3a0b7"; implicitWidth: 18; implicitHeight: 18 }
-                        Label { text: nav.text; color: app.currentPage === nav.index ? "#f3edff" : "#b1aec4"; font.pixelSize: 12; font.weight: app.currentPage === nav.index ? Font.DemiBold : Font.Normal; Layout.fillWidth: true }
-                        Rectangle { visible: app.currentPage === nav.index; implicitWidth: 5; implicitHeight: 5; radius: 3; color: "#b5a0ff" }
-                    }
-                    leftPadding: 13; rightPadding: 14
-                    background: Rectangle {
-                        radius: 8
-                        color: app.currentPage === nav.index ? "#393348" : (nav.hovered ? "#2d2b3e" : "transparent")
-                        border.color: nav.activeFocus ? theme.accent : "transparent"
-                        Behavior on color { ColorAnimation { duration: theme.reducedMotion ? 0 : 140 } }
-                    }
+                    iconName: ["overview", "hardware", "sensors", "stress", "benchmark", "report"][nav.index]
+                    text: app.pageNames[nav.index]
+                    selected: app.currentPage === nav.index
+                    onClicked: app.navigateTo(nav.index)
                 }
             }
             Item { Layout.fillHeight: true }
             Rectangle {
-                Layout.fillWidth: true; implicitHeight: jobColumn.implicitHeight + 24; radius: 9
+                Layout.fillWidth: true
+                implicitHeight: jobColumn.implicitHeight + theme.space6
+                radius: theme.radiusMd
                 visible: testRunner.state.running
-                color: "#302c43"; border.color: "#49405e"
+                color: theme.sidebarHover
+                border.width: theme.borderWidth
+                border.color: theme.sidebarBorder
                 ColumnLayout {
                     id: jobColumn
-                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
-                    Label { text: theme.t("测试进行中", "Test in progress"); color: "#d1c3f5"; font.pixelSize: 11 }
-                    Label { text: testRunner.state.elapsed + " / " + testRunner.state.duration + " s"; color: "#a8a2bc"; font.pixelSize: 10 }
-                    ActionButton { ui: theme; text: theme.t("停止测试", "Stop test"); symbol: "stop"; compact: true; Layout.fillWidth: true; onClicked: testRunner.stop(); objectName: "globalStopButton" }
+                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: theme.space3 }
+                    spacing: theme.space1
+                    Label {
+                        text: theme.t("测试进行中", "Test in progress")
+                        color: theme.sidebarTextStrong
+                        font.pixelSize: theme.fontSmall
+                        font.weight: Font.Medium
+                    }
+                    Label {
+                        text: (testRunner.state.progress || 0) + "% · " + testRunner.state.elapsed + " / " + testRunner.state.duration + " s"
+                        color: theme.sidebarMuted
+                        font.pixelSize: theme.fontMicro
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.topMargin: theme.space1
+                        implicitHeight: 4
+                        radius: theme.radiusPill
+                        color: theme.sidebarBorder
+                        Rectangle {
+                            width: parent.width * Math.max(0, Math.min(1, (testRunner.state.progress || 0) / 100))
+                            height: parent.height
+                            radius: theme.radiusPill
+                            color: theme.accent
+                        }
+                    }
+                    ActionButton {
+                        ui: theme
+                        text: theme.t("停止测试", "Stop test")
+                        symbol: "stop"
+                        primary: true
+                        compact: true
+                        Layout.fillWidth: true
+                        Layout.topMargin: theme.space1
+                        onClicked: testRunner.stop()
+                        objectName: "globalStopButton"
+                    }
                 }
             }
-            Button {
+            NavItem {
                 id: settingsNav
+                ui: theme
                 objectName: "settingsButton"
-                text: app.pageNames[6]; Layout.fillWidth: true; implicitHeight: 44; hoverEnabled: true
+                text: app.pageNames[6]
+                iconName: "settings"
+                selected: app.currentPage === 6
+                Layout.fillWidth: true
+                Layout.topMargin: theme.space2
                 onClicked: app.navigateTo(6)
-                contentItem: RowLayout {
-                    spacing: 12
-                    Icon { name: "settings"; color: "#a3a0b7"; implicitWidth: 18; implicitHeight: 18 }
-                    Label { text: settingsNav.text; color: "#b1aec4"; font.pixelSize: 12; Layout.fillWidth: true }
-                }
-                leftPadding: 13
-                background: Rectangle { color: settingsNav.hovered || app.currentPage === 6 ? "#302d40" : "transparent"; radius: 8; border.color: settingsNav.activeFocus ? theme.accent : "transparent" }
             }
-            Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: "#373548"; Layout.topMargin: 9; Layout.bottomMargin: 12 }
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: theme.borderWidth
+                color: theme.sidebarBorder
+                Layout.topMargin: theme.space3
+                Layout.bottomMargin: theme.space3
+            }
             RowLayout {
-                Layout.leftMargin: 10
-                Rectangle { implicitWidth: 6; implicitHeight: 6; radius: 3; color: hardware.error ? "#d9a775" : "#85b6a4" }
-                Label { text: hardware.busy ? theme.t("正在采集…", "Collecting…") : theme.t("本机实时采集", "Live local data"); color: "#aaa5bd"; font.pixelSize: 10 }
+                Layout.leftMargin: theme.space3
+                spacing: theme.space2
+                Rectangle {
+                    implicitWidth: 6
+                    implicitHeight: 6
+                    radius: theme.radiusPill
+                    color: hardware.error ? theme.warning : theme.green
+                }
+                Label {
+                    text: hardware.busy ? theme.t("正在采集…", "Collecting…") : theme.t("本机实时采集", "Live local data")
+                    color: theme.sidebarText
+                    font.pixelSize: theme.fontMicro
+                }
             }
-            Label { text: "NekoScope · Linux"; color: "#737087"; font.pixelSize: 9; Layout.leftMargin: 10; Layout.topMargin: 4; Layout.bottomMargin: 7 }
+            Label {
+                text: "NekoScope · Linux"
+                color: theme.sidebarMuted
+                font.pixelSize: theme.fontMicro
+                Layout.leftMargin: theme.space3
+                Layout.topMargin: theme.space1
+                Layout.bottomMargin: theme.space1
+            }
         }
     }
+
     ColumnLayout {
         anchors { left: sidebar.right; right: parent.right; top: parent.top; bottom: parent.bottom }
         spacing: 0
         Rectangle {
-            Layout.fillWidth: true; implicitHeight: 65; color: theme.panel
+            Layout.fillWidth: true
+            implicitHeight: 64
+            color: theme.panel
             RowLayout {
-                anchors.fill: parent; anchors.leftMargin: 28; anchors.rightMargin: 28; spacing: 12
-                Label { text: theme.t("工作空间", "Workspace"); color: theme.muted; font.pixelSize: 11 }
-                Label { text: "/"; color: theme.border; font.pixelSize: 15 }
-                Label { text: app.pageNames[app.currentPage]; color: theme.secondary; font.pixelSize: 11 }
+                anchors.fill: parent
+                anchors.leftMargin: app.width > 1200 ? theme.space8 : theme.space6
+                anchors.rightMargin: app.width > 1200 ? theme.space8 : theme.space6
+                spacing: theme.space3
+                Label {
+                    text: theme.t("工作空间", "Workspace")
+                    color: theme.muted
+                    font.pixelSize: theme.fontSmall
+                }
+                Label {
+                    text: "/"
+                    color: theme.borderStrong
+                    font.pixelSize: theme.fontBodyLarge
+                }
+                Label {
+                    text: app.pageNames[app.currentPage]
+                    color: theme.secondary
+                    font.pixelSize: theme.fontSmall
+                    font.weight: Font.Medium
+                }
                 Item { Layout.fillWidth: true }
-                Label { text: "LINUX NATIVE"; color: theme.accent; font.pixelSize: 9; font.letterSpacing: 1.2; visible: app.width > 1100 }
-                ActionButton { ui: theme; compact: true; text: theme.chinese ? "EN" : "中文"; onClicked: preferences.language = theme.chinese ? "en" : "zh_CN"; objectName: "languageToggle" }
-                ActionButton { ui: theme; compact: true; symbol: "sun"; text: theme.dark ? theme.t("浅色", "Light") : theme.t("深色", "Dark"); onClicked: preferences.theme = theme.dark ? "light" : "dark"; objectName: "themeToggle" }
-                ActionButton { ui: theme; compact: true; symbol: "refresh"; text: theme.t("刷新", "Refresh"); enabled: !hardware.busy; onClicked: hardware.refresh(); objectName: "refreshButton" }
+                Label {
+                    text: "LINUX NATIVE"
+                    color: theme.accent
+                    font.pixelSize: theme.fontMicro
+                    font.weight: Font.Medium
+                    font.letterSpacing: 1.3
+                    visible: app.width > 1100
+                }
+                ActionButton {
+                    ui: theme
+                    compact: true
+                    text: theme.chinese ? "EN" : "中文"
+                    onClicked: preferences.language = theme.chinese ? "en" : "zh_CN"
+                    objectName: "languageToggle"
+                }
+                ActionButton {
+                    ui: theme
+                    compact: true
+                    symbol: theme.dark ? "sun" : "moon"
+                    text: theme.dark ? theme.t("浅色", "Light") : theme.t("深色", "Dark")
+                    onClicked: preferences.theme = theme.dark ? "light" : "dark"
+                    objectName: "themeToggle"
+                }
+                ActionButton {
+                    ui: theme
+                    compact: true
+                    symbol: "refresh"
+                    text: theme.t("刷新", "Refresh")
+                    enabled: !hardware.busy
+                    onClicked: hardware.refresh()
+                    objectName: "refreshButton"
+                }
             }
-            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: theme.border }
+            Rectangle {
+                anchors.bottom: parent.bottom
+                width: parent.width
+                height: theme.borderWidth
+                color: theme.border
+            }
         }
         StackLayout {
             id: pages
-            Layout.fillWidth: true; Layout.fillHeight: true
+            Layout.fillWidth: true
+            Layout.fillHeight: true
             currentIndex: app.currentPage
             OverviewPage { ui: theme; appWindow: app; objectName: "overviewPage" }
             HardwarePage { ui: theme; objectName: "hardwarePage" }
@@ -159,12 +298,31 @@ ApplicationWindow {
             SettingsPage { ui: theme; objectName: "settingsPage" }
         }
         Rectangle {
-            Layout.fillWidth: true; implicitHeight: 31; color: theme.background
+            Layout.fillWidth: true
+            implicitHeight: 32
+            color: theme.background
+            Rectangle {
+                anchors.top: parent.top
+                width: parent.width
+                height: theme.borderWidth
+                color: theme.border
+            }
             RowLayout {
-                anchors.fill: parent; anchors.leftMargin: 28; anchors.rightMargin: 28
-                Label { text: theme.t("只读硬件采集 · 普通用户会话", "Read-only inventory · User session"); font.pixelSize: 9; color: theme.muted }
+                anchors.fill: parent
+                anchors.leftMargin: app.width > 1200 ? theme.space8 : theme.space6
+                anchors.rightMargin: app.width > 1200 ? theme.space8 : theme.space6
+                Label {
+                    text: theme.t("只读硬件采集 · 普通用户会话", "Read-only inventory · User session")
+                    font.pixelSize: theme.fontMicro
+                    color: theme.muted
+                }
                 Item { Layout.fillWidth: true }
-                Label { text: (hardware.renderBackend || theme.t("等待渲染器", "Waiting for renderer")); font.pixelSize: 9; color: theme.muted; objectName: "renderBackendLabel" }
+                Label {
+                    text: hardware.renderBackend || theme.t("等待渲染器", "Waiting for renderer")
+                    font.pixelSize: theme.fontMicro
+                    color: theme.muted
+                    objectName: "renderBackendLabel"
+                }
             }
         }
     }
