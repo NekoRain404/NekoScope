@@ -14,6 +14,8 @@ struct SensorSnapshot {
     QVariantMap groups;
     QVariantMap names;
     QVariantMap units;
+    QVariantMap deviceIds;
+    QVariantMap deviceNames;
     QDateTime collectedAt;
 };
 

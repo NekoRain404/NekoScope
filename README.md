@@ -54,6 +54,10 @@ GPU drivers.
 
 - Overview, hardware detail, sensors, stress test, benchmarks, reports and
   preferences, with live Chinese/English switching and light/dark/system themes.
+- HWiNFO-style grouped navigation: sensors by physical device then sensor type,
+  and the hardware tree by inventory category, both collapsible with a flat mode.
+- Preferences for sample interval, retained history length, Celsius/Fahrenheit,
+  diagnostics visibility, start page and reset-to-defaults.
 - Every inventory field carries its source, UTC capture time and read status;
   unknown, unavailable, permission-denied and read-error states are distinct.
 - Sensor sampling runs off the GUI thread, with bounded history, favorites,

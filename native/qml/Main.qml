@@ -19,6 +19,7 @@ ApplicationWindow {
     property alias ui: theme
     readonly property var pageNames: [theme.t("系统概览", "Overview"), theme.t("硬件信息", "Hardware"), theme.t("实时传感器", "Sensors"), theme.t("压力测试", "Stress test"), theme.t("基准测试", "Benchmarks"), theme.t("系统报告", "Reports"), theme.t("偏好设置", "Preferences")]
     function navigateTo(index) { if (index >= 0 && index < 7) currentPage = index }
+    Component.onCompleted: currentPage = preferences.startPage
     Theme { id: theme }
     palette {
         window: theme.background
@@ -295,7 +296,7 @@ ApplicationWindow {
             StressPage { ui: theme; objectName: "stressPage" }
             BenchmarksPage { ui: theme; objectName: "benchmarksPage" }
             ReportsPage { ui: theme; objectName: "reportsPage" }
-            SettingsPage { ui: theme; objectName: "settingsPage" }
+            SettingsPage { ui: theme; pageNames: app.pageNames; objectName: "settingsPage" }
         }
         Rectangle {
             Layout.fillWidth: true

@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
+#include <QSet>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -35,6 +36,25 @@ QString displayName(QString name)
     name.replace(QLatin1Char('_'), QLatin1Char(' '));
     return name;
 }
+struct DeviceIdentity { QString id; QString name; };
+DeviceIdentity hwmonDevice(const QString &chip, const QString &canonical)
+{
+    const QString key = chip.trimmed().toLower();
+    static const QSet<QString> cpuChips{QStringLiteral("coretemp"), QStringLiteral("k10temp"),
+        QStringLiteral("zenpower"), QStringLiteral("cpu_thermal"), QStringLiteral("x86_pkg_temp")};
+    static const QSet<QString> gpuChips{QStringLiteral("amdgpu"), QStringLiteral("i915"),
+        QStringLiteral("xe"), QStringLiteral("nouveau"), QStringLiteral("radeon"), QStringLiteral("nvidia")};
+    if (cpuChips.contains(key)) return {QStringLiteral("cpu"), QStringLiteral("CPU")};
+    if (gpuChips.contains(key)) return {QStringLiteral("gpu"), QStringLiteral("GPU")};
+    if (key.startsWith(QStringLiteral("nvme"))) return {QStringLiteral("nvme"), QStringLiteral("NVMe")};
+    static const QStringList motherboardHints{QStringLiteral("nct"), QStringLiteral("it87"),
+        QStringLiteral("asus"), QStringLiteral("thinkpad"), QStringLiteral("dell"),
+        QStringLiteral("acpi"), QStringLiteral("msi"), QStringLiteral("gigabyte"),
+        QStringLiteral("asrock"), QStringLiteral("superio"), QStringLiteral("applesmc")};
+    for (const auto &hint : motherboardHints)
+        if (key.contains(hint)) return {QStringLiteral("motherboard"), QStringLiteral("Motherboard")};
+    return {QStringLiteral("hwmon:") + canonical, chip.isEmpty() ? QStringLiteral("Unknown sensor") : chip};
+}
 }
 SensorCollector::SensorCollector(QString procRoot, QString sysRoot)
     : procRoot_(QDir::cleanPath(std::move(procRoot))), sysRoot_(QDir::cleanPath(std::move(sysRoot)))
@@ -50,13 +70,21 @@ SensorSnapshot SensorCollector::collect(Clock::time_point now)
     auto &groups = snapshot.groups;
     auto &names = snapshot.names;
     auto &units = snapshot.units;
+    auto &deviceIds = snapshot.deviceIds;
+    auto &deviceNames = snapshot.deviceNames;
     QMap<QString, CpuTimes> nextCpuTimes;
     QMap<QString, Counter> nextCounters;
-    auto add = [&](const QString &id, const QString &name, const QString &group, double value,
-                   const QString &unit, const QString &source) {
+    auto addFor = [&](const QString &id, const QString &name, const QString &group, double value,
+                      const QString &unit, const QString &source,
+                      const QString &deviceId, const QString &deviceName) {
         if (!std::isfinite(value)) return;
         values.insert(id, value); sources.insert(id, source); groups.insert(id, group);
         names.insert(id, name); units.insert(id, unit);
+        deviceIds.insert(id, deviceId); deviceNames.insert(id, deviceName);
+    };
+    auto add = [&](const QString &id, const QString &name, const QString &group, double value,
+                   const QString &unit, const QString &source) {
+        addFor(id, name, group, value, unit, source, QStringLiteral("system"), QStringLiteral("System"));
     };
 
     // /proc/stat CPU counters are cumulative; usage is derived from two actual samples.
@@ -89,7 +117,7 @@ SensorSnapshot SensorCollector::collect(Clock::time_point now)
                 const bool aggregate = cpuId == QStringLiteral("cpu");
                 const QString id = aggregate ? QStringLiteral("cpu.usage") : QStringLiteral("cpu.core.") + cpuId.mid(3) + QStringLiteral(".usage");
                 const QString name = aggregate ? QStringLiteral("CPU utilization") : QStringLiteral("Core %1 utilization").arg(cpuId.mid(3));
-                add(id, name, aggregate ? QStringLiteral("CPU") : QStringLiteral("CPU cores"), usage, QStringLiteral("%"), procRoot_ + QStringLiteral("/stat"));
+                addFor(id, name, aggregate ? QStringLiteral("CPU") : QStringLiteral("CPU cores"), usage, QStringLiteral("%"), procRoot_ + QStringLiteral("/stat"), QStringLiteral("cpu"), QStringLiteral("CPU"));
             }
         }
     }
@@ -109,15 +137,15 @@ SensorSnapshot SensorCollector::collect(Clock::time_point now)
     if (mem.value(QStringLiteral("MemTotal")) > 0 && mem.contains(QStringLiteral("MemAvailable"))) {
         const double total = static_cast<double>(mem.value(QStringLiteral("MemTotal"))) * 1024.0;
         const double used = std::max(0.0, total - static_cast<double>(mem.value(QStringLiteral("MemAvailable"))) * 1024.0);
-        add(QStringLiteral("memory.used"), QStringLiteral("Memory used"), QStringLiteral("Memory"), used / kGiB, QStringLiteral("GiB"), procRoot_ + QStringLiteral("/meminfo"));
-        add(QStringLiteral("memory.usage"), QStringLiteral("Memory utilization"), QStringLiteral("Memory"), total > 0 ? used * 100.0 / total : 0.0, QStringLiteral("%"), procRoot_ + QStringLiteral("/meminfo"));
-        add(QStringLiteral("memory.total"), QStringLiteral("Memory total"), QStringLiteral("Memory"), total / kGiB, QStringLiteral("GiB"), procRoot_ + QStringLiteral("/meminfo"));
+        addFor(QStringLiteral("memory.used"), QStringLiteral("Memory used"), QStringLiteral("Memory"), used / kGiB, QStringLiteral("GiB"), procRoot_ + QStringLiteral("/meminfo"), QStringLiteral("memory"), QStringLiteral("Memory"));
+        addFor(QStringLiteral("memory.usage"), QStringLiteral("Memory utilization"), QStringLiteral("Memory"), total > 0 ? used * 100.0 / total : 0.0, QStringLiteral("%"), procRoot_ + QStringLiteral("/meminfo"), QStringLiteral("memory"), QStringLiteral("Memory"));
+        addFor(QStringLiteral("memory.total"), QStringLiteral("Memory total"), QStringLiteral("Memory"), total / kGiB, QStringLiteral("GiB"), procRoot_ + QStringLiteral("/meminfo"), QStringLiteral("memory"), QStringLiteral("Memory"));
     }
     if (mem.contains(QStringLiteral("SwapTotal")) && mem.value(QStringLiteral("SwapTotal")) > 0 && mem.contains(QStringLiteral("SwapFree"))) {
         const double total = static_cast<double>(mem.value(QStringLiteral("SwapTotal"))) / (1024.0 * 1024.0);
         const double used = static_cast<double>(mem.value(QStringLiteral("SwapTotal")) - std::min(mem.value(QStringLiteral("SwapTotal")), mem.value(QStringLiteral("SwapFree")))) / (1024.0 * 1024.0);
-        add(QStringLiteral("swap.used"), QStringLiteral("Swap used"), QStringLiteral("Memory"), used, QStringLiteral("GiB"), procRoot_ + QStringLiteral("/meminfo"));
-        add(QStringLiteral("swap.usage"), QStringLiteral("Swap utilization"), QStringLiteral("Memory"), used * 100.0 / total, QStringLiteral("%"), procRoot_ + QStringLiteral("/meminfo"));
+        addFor(QStringLiteral("swap.used"), QStringLiteral("Swap used"), QStringLiteral("Memory"), used, QStringLiteral("GiB"), procRoot_ + QStringLiteral("/meminfo"), QStringLiteral("memory"), QStringLiteral("Memory"));
+        addFor(QStringLiteral("swap.usage"), QStringLiteral("Swap utilization"), QStringLiteral("Memory"), used * 100.0 / total, QStringLiteral("%"), procRoot_ + QStringLiteral("/meminfo"), QStringLiteral("memory"), QStringLiteral("Memory"));
     }
 
     const auto loadavg = readText(procRoot_ + QStringLiteral("/loadavg")).split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
@@ -128,8 +156,8 @@ SensorSnapshot SensorCollector::collect(Clock::time_point now)
     for (const auto &policy : policies.entryList(QStringList{QStringLiteral("policy*")}, QDir::Dirs | QDir::NoDotAndDotDot)) {
         double khz = 0;
         if (readNumber(policies.filePath(policy + QStringLiteral("/scaling_cur_freq")), khz)) {
-            add(QStringLiteral("cpu.frequency.") + policy.mid(6), QStringLiteral("CPU frequency ") + policy.mid(6), QStringLiteral("CPU"), khz / 1000000.0, QStringLiteral("GHz"), policies.filePath(policy + QStringLiteral("/scaling_cur_freq")));
-            if (!values.contains(QStringLiteral("cpu.frequency"))) add(QStringLiteral("cpu.frequency"), QStringLiteral("CPU frequency"), QStringLiteral("CPU"), khz / 1000000.0, QStringLiteral("GHz"), policies.filePath(policy + QStringLiteral("/scaling_cur_freq")));
+            addFor(QStringLiteral("cpu.frequency.") + policy.mid(6), QStringLiteral("CPU frequency ") + policy.mid(6), QStringLiteral("CPU"), khz / 1000000.0, QStringLiteral("GHz"), policies.filePath(policy + QStringLiteral("/scaling_cur_freq")), QStringLiteral("cpu"), QStringLiteral("CPU"));
+            if (!values.contains(QStringLiteral("cpu.frequency"))) addFor(QStringLiteral("cpu.frequency"), QStringLiteral("CPU frequency"), QStringLiteral("CPU"), khz / 1000000.0, QStringLiteral("GHz"), policies.filePath(policy + QStringLiteral("/scaling_cur_freq")), QStringLiteral("cpu"), QStringLiteral("CPU"));
         }
     }
     QDir powercap(sysRoot_ + QStringLiteral("/class/powercap"));
@@ -144,7 +172,7 @@ SensorSnapshot SensorCollector::collect(Clock::time_point now)
         bool ok = false;
         const auto energy = readText(file).toULongLong(&ok);
         if (!ok) continue;
-        add(QStringLiteral("cpu.energy.") + dir, displayName(dir) + QStringLiteral(" energy"), QStringLiteral("CPU"), static_cast<double>(energy) / 1000000.0, QStringLiteral("J"), file);
+        addFor(QStringLiteral("cpu.energy.") + dir, displayName(dir) + QStringLiteral(" energy"), QStringLiteral("CPU"), static_cast<double>(energy) / 1000000.0, QStringLiteral("J"), file, QStringLiteral("cpu"), QStringLiteral("CPU"));
         const auto key = QStringLiteral("energy.") + dir;
         nextCounters.insert(key, {energy, now});
         const auto previous = previousCounters_.constFind(key);
@@ -162,17 +190,17 @@ SensorSnapshot SensorCollector::collect(Clock::time_point now)
             }
             if (valid && seconds > 0.0) {
                 const double watts = static_cast<double>(delta) / 1000000.0 / seconds;
-                add(QStringLiteral("cpu.power.") + dir, displayName(dir) + QStringLiteral(" power"), QStringLiteral("CPU"), watts, QStringLiteral("W"), file);
+                addFor(QStringLiteral("cpu.power.") + dir, displayName(dir) + QStringLiteral(" power"), QStringLiteral("CPU"), watts, QStringLiteral("W"), file, QStringLiteral("cpu"), QStringLiteral("CPU"));
                 if (isPackage) { packagePower += watts; ++sampledPackages; packageSources.append(file); }
             }
         }
         double limit = 0;
         const auto limitFile = base + QStringLiteral("/constraint_0_max_power_uw");
         if (readNumber(limitFile, limit))
-            add(QStringLiteral("cpu.power.limit.") + dir, displayName(dir) + QStringLiteral(" power limit"), QStringLiteral("CPU"), limit / 1000000.0, QStringLiteral("W"), limitFile);
+            addFor(QStringLiteral("cpu.power.limit.") + dir, displayName(dir) + QStringLiteral(" power limit"), QStringLiteral("CPU"), limit / 1000000.0, QStringLiteral("W"), limitFile, QStringLiteral("cpu"), QStringLiteral("CPU"));
     }
     if (packageCount > 0 && packageCount == sampledPackages)
-        add(QStringLiteral("cpu.power"), QStringLiteral("CPU package power"), QStringLiteral("CPU"), packagePower, QStringLiteral("W"), packageSources.join(QStringLiteral("; ")));
+        addFor(QStringLiteral("cpu.power"), QStringLiteral("CPU package power"), QStringLiteral("CPU"), packagePower, QStringLiteral("W"), packageSources.join(QStringLiteral("; ")), QStringLiteral("cpu"), QStringLiteral("CPU"));
 
     // hwmon values are discovered dynamically. CPU temperature is recognized only for known CPU labels.
     double cpuTemperature = -std::numeric_limits<double>::infinity();
@@ -204,7 +232,8 @@ SensorSnapshot SensorCollector::collect(Clock::time_point now)
                 const QString unit = type == QStringLiteral("temp") ? QStringLiteral("°C") : type == QStringLiteral("fan") ? QStringLiteral("RPM") : type == QStringLiteral("in") ? QStringLiteral("V") : type == QStringLiteral("energy") ? QStringLiteral("J") : QStringLiteral("W");
                 const QString group = type == QStringLiteral("temp") ? QStringLiteral("Temperature") : type == QStringLiteral("fan") ? QStringLiteral("Cooling") : type == QStringLiteral("in") ? QStringLiteral("Voltage") : QStringLiteral("Power");
                 const QString name = chip + QStringLiteral(" ") + (label.isEmpty() ? type + number : label);
-                add(QStringLiteral("hwmon.") + identity + QLatin1Char('.') + type + number, name, group, value, unit, file);
+                const auto device = hwmonDevice(chip, identity);
+                addFor(QStringLiteral("hwmon.") + identity + QLatin1Char('.') + type + number, name, group, value, unit, file, device.id, device.name);
                 if (type == QStringLiteral("temp") && value > cpuTemperature &&
                     (chip.contains(QStringLiteral("coretemp"), Qt::CaseInsensitive) || chip.contains(QStringLiteral("k10temp"), Qt::CaseInsensitive) || chip.contains(QStringLiteral("zenpower"), Qt::CaseInsensitive) || chip.contains(QStringLiteral("cpu_thermal"), Qt::CaseInsensitive) || chip.contains(QStringLiteral("x86_pkg_temp"), Qt::CaseInsensitive))) {
                     cpuTemperature = value;
@@ -215,7 +244,7 @@ SensorSnapshot SensorCollector::collect(Clock::time_point now)
     }
 
     if (std::isfinite(cpuTemperature))
-        add(QStringLiteral("cpu.temperature"), QStringLiteral("CPU temperature (hottest)"), QStringLiteral("CPU"), cpuTemperature, QStringLiteral("°C"), cpuTemperatureSource);
+        addFor(QStringLiteral("cpu.temperature"), QStringLiteral("CPU temperature (hottest)"), QStringLiteral("CPU"), cpuTemperature, QStringLiteral("°C"), cpuTemperatureSource, QStringLiteral("cpu"), QStringLiteral("CPU"));
 
     // Battery attributes use Linux power_supply values and retain each battery's identity.
     QDir supplies(sysRoot_ + QStringLiteral("/class/power_supply"));
@@ -230,7 +259,7 @@ SensorSnapshot SensorCollector::collect(Clock::time_point now)
             QString unit = field == QStringLiteral("capacity") ? QStringLiteral("%") : field == QStringLiteral("voltage_now") ? QStringLiteral("V") : field == QStringLiteral("current_now") ? QStringLiteral("A") : field == QStringLiteral("energy_now") ? QStringLiteral("Wh") : QStringLiteral("W");
             double value = field == QStringLiteral("voltage_now") ? raw / 1000000.0 : field == QStringLiteral("current_now") ? raw / 1000000.0 : field == QStringLiteral("power_now") ? raw / 1000000.0 : field == QStringLiteral("energy_now") ? raw / 1000000.0 : raw;
             const QString label = field == QStringLiteral("capacity") ? QStringLiteral("charge") : field;
-            add(QStringLiteral("battery.") + supply + QLatin1Char('.') + label, supply + QStringLiteral(" ") + displayName(label), QStringLiteral("Battery"), value, unit, file);
+            addFor(QStringLiteral("battery.") + supply + QLatin1Char('.') + label, supply + QStringLiteral(" ") + displayName(label), QStringLiteral("Battery"), value, unit, file, QStringLiteral("battery"), QStringLiteral("Battery"));
         }
     }
 
@@ -254,7 +283,7 @@ SensorSnapshot SensorCollector::collect(Clock::time_point now)
                 if (old == previousCounters_.cend() || counter < old->value) continue;
                 const double seconds = std::chrono::duration<double>(now - old->at).count();
                 if (seconds > 0.0)
-                    add(rate, device + QLatin1Char(' ') + suffix + QStringLiteral(" throughput"), QStringLiteral("Disk I/O"), static_cast<double>(counter - old->value) * 512.0 / 1024.0 / seconds, QStringLiteral("KiB/s"), procRoot_ + QStringLiteral("/diskstats"));
+                    addFor(rate, device + QLatin1Char(' ') + suffix + QStringLiteral(" throughput"), QStringLiteral("Disk I/O"), static_cast<double>(counter - old->value) * 512.0 / 1024.0 / seconds, QStringLiteral("KiB/s"), procRoot_ + QStringLiteral("/diskstats"), QStringLiteral("storage"), QStringLiteral("Storage"));
             }
         }
     }
@@ -273,7 +302,7 @@ SensorSnapshot SensorCollector::collect(Clock::time_point now)
             if (old == previousCounters_.cend() || counter < old->value) continue;
             const double seconds = std::chrono::duration<double>(now - old->at).count();
             if (seconds > 0.0)
-                add(key + QStringLiteral(".rate"), iface + QLatin1Char(' ') + direction + QStringLiteral(" throughput"), QStringLiteral("Network"), static_cast<double>(counter - old->value) / 1024.0 / seconds, QStringLiteral("KiB/s"), file);
+                addFor(key + QStringLiteral(".rate"), iface + QLatin1Char(' ') + direction + QStringLiteral(" throughput"), QStringLiteral("Network"), static_cast<double>(counter - old->value) / 1024.0 / seconds, QStringLiteral("KiB/s"), file, QStringLiteral("network"), QStringLiteral("Network"));
         }
     }
 
@@ -282,20 +311,20 @@ SensorSnapshot SensorCollector::collect(Clock::time_point now)
     for (const auto &card : drm.entryList(QStringList{QStringLiteral("card[0-9]*")}, QDir::Dirs | QDir::NoDotAndDotDot)) {
         const auto base = drm.filePath(card + QStringLiteral("/device"));
         double busy = 0;
-        if (readNumber(base + QStringLiteral("/gpu_busy_percent"), busy)) add(QStringLiteral("gpu.") + card + QStringLiteral(".usage"), card + QStringLiteral(" utilization"), QStringLiteral("GPU"), busy, QStringLiteral("%"), base + QStringLiteral("/gpu_busy_percent"));
+        if (readNumber(base + QStringLiteral("/gpu_busy_percent"), busy)) addFor(QStringLiteral("gpu.") + card + QStringLiteral(".usage"), card + QStringLiteral(" utilization"), QStringLiteral("GPU"), busy, QStringLiteral("%"), base + QStringLiteral("/gpu_busy_percent"), QStringLiteral("gpu"), QStringLiteral("GPU"));
         double total = 0, used = 0;
         if (readNumber(base + QStringLiteral("/mem_info_vram_total"), total) && readNumber(base + QStringLiteral("/mem_info_vram_used"), used) && total > 0) {
-            add(QStringLiteral("gpu.") + card + QStringLiteral(".vram_used"), card + QStringLiteral(" VRAM used"), QStringLiteral("GPU memory"), used / kGiB, QStringLiteral("GiB"), base + QStringLiteral("/mem_info_vram_used"));
-            add(QStringLiteral("gpu.") + card + QStringLiteral(".vram_total"), card + QStringLiteral(" VRAM total"), QStringLiteral("GPU memory"), total / kGiB, QStringLiteral("GiB"), base + QStringLiteral("/mem_info_vram_total"));
+            addFor(QStringLiteral("gpu.") + card + QStringLiteral(".vram_used"), card + QStringLiteral(" VRAM used"), QStringLiteral("GPU memory"), used / kGiB, QStringLiteral("GiB"), base + QStringLiteral("/mem_info_vram_used"), QStringLiteral("gpu"), QStringLiteral("GPU"));
+            addFor(QStringLiteral("gpu.") + card + QStringLiteral(".vram_total"), card + QStringLiteral(" VRAM total"), QStringLiteral("GPU memory"), total / kGiB, QStringLiteral("GiB"), base + QStringLiteral("/mem_info_vram_total"), QStringLiteral("gpu"), QStringLiteral("GPU"));
         }
     }
 
     QFile thermal(sysRoot_ + QStringLiteral("/devices/system/cpu/thermal_throttle/package_throttle_count"));
     double throttle = 0;
-    if (readNumber(thermal.fileName(), throttle)) add(QStringLiteral("cpu.thermal_throttle.package"), QStringLiteral("CPU package thermal throttle count"), QStringLiteral("CPU"), throttle, QStringLiteral("count"), thermal.fileName());
+    if (readNumber(thermal.fileName(), throttle)) addFor(QStringLiteral("cpu.thermal_throttle.package"), QStringLiteral("CPU package thermal throttle count"), QStringLiteral("CPU"), throttle, QStringLiteral("count"), thermal.fileName(), QStringLiteral("cpu"), QStringLiteral("CPU"));
     for (const auto &core : QDir(sysRoot_ + QStringLiteral("/devices/system/cpu")).entryList(QStringList{QStringLiteral("cpu[0-9]*")}, QDir::Dirs | QDir::NoDotAndDotDot)) {
         const auto file = sysRoot_ + QStringLiteral("/devices/system/cpu/") + core + QStringLiteral("/thermal_throttle/core_throttle_count");
-        if (readNumber(file, throttle)) add(QStringLiteral("cpu.thermal_throttle.") + core, core + QStringLiteral(" thermal throttle count"), QStringLiteral("CPU"), throttle, QStringLiteral("count"), file);
+        if (readNumber(file, throttle)) addFor(QStringLiteral("cpu.thermal_throttle.") + core, core + QStringLiteral(" thermal throttle count"), QStringLiteral("CPU"), throttle, QStringLiteral("count"), file, QStringLiteral("cpu"), QStringLiteral("CPU"));
     }
     previousCpuTimes_ = std::move(nextCpuTimes);
     previousCounters_ = std::move(nextCounters);

@@ -21,6 +21,7 @@ class SensorService final : public QObject
     Q_PROPERTY(QVariantMap summary READ summary NOTIFY readingsChanged)
     Q_PROPERTY(bool paused READ paused WRITE setPaused NOTIFY pausedChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(int historyLimit READ historyLimit WRITE setHistoryLimit NOTIFY historyLimitChanged)
 
 public:
     explicit SensorService(QObject *parent = nullptr);
@@ -33,6 +34,7 @@ public:
     QVariantMap summary() const;
     bool paused() const;
     bool busy() const;
+    int historyLimit() const { return historyLimit_; }
 
 public slots:
     // Synchronous collection for CLI/tests. Ignored while asynchronous work is pending.
@@ -41,12 +43,14 @@ public slots:
     void requestSample();
     void resetStatistics();
     void setPaused(bool paused);
+    void setHistoryLimit(int limit);
     Q_INVOKABLE void toggleFavorite(const QString &id);
 
 signals:
     void readingsChanged();
     void pausedChanged();
     void busyChanged();
+    void historyLimitChanged();
     void sampleFinished();
     void temperatureObserved(double celsius);
     // Emitted every completed collection, even when UI updates are paused.
@@ -56,6 +60,7 @@ private:
     struct Metric { QList<double> samples; };
     void applySnapshot(const SensorSnapshot &snapshot);
     void appendMetric(const QString &id, const QVariantMap &reading);
+    void appendHistory(QVariantList &history, double value);
     void loadFavorites();
 
     // Declared before watcher so collector outlives watcher destruction as well.
@@ -67,6 +72,7 @@ private:
     QVariantMap summary_;
     bool paused_ = false;
     bool busy_ = false;
+    int historyLimit_ = 90;
     QMap<QString, Metric> metrics_;
     QSet<QString> favorites_;
 };

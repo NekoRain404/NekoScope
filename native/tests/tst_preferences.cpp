@@ -18,6 +18,15 @@ private slots:
             prefs.setLanguage("en");
             prefs.setAccent("#40a0b0");
             prefs.setReducedMotion(true);
+            prefs.setSensorIntervalMs(2000);
+            prefs.setHistorySamples(150);
+            prefs.setTemperatureUnit("fahrenheit");
+            prefs.setStartPage(3);
+            prefs.setShowDiagnostics(false);
+            prefs.setSensorIntervalMs(1234);
+            prefs.setHistorySamples(9999);
+            prefs.setTemperatureUnit("kelvin");
+            prefs.setStartPage(99);
             prefs.setTheme("invalid");
             prefs.setLanguage("invalid");
             prefs.setAccent("red; url()");
@@ -28,8 +37,35 @@ private slots:
         QCOMPARE(restored.language(), QString("en"));
         QCOMPARE(restored.accent(), QString("#40a0b0"));
         QVERIFY(restored.reducedMotion());
+        QCOMPARE(restored.sensorIntervalMs(), 2000);
+        QCOMPARE(restored.historySamples(), 150);
+        QCOMPARE(restored.temperatureUnit(), QString("fahrenheit"));
+        QCOMPARE(restored.startPage(), 3);
+        QVERIFY(!restored.showDiagnostics());
         QSettings settings(path, QSettings::IniFormat);
         QCOMPARE(settings.value("schemaVersion").toInt(), 1);
+    }
+    void resetsToDefaults()
+    {
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        const QString path = root.filePath("reset.ini");
+        neko::Preferences prefs(path);
+        prefs.setTheme("dark");
+        prefs.setLanguage("en");
+        prefs.setSensorIntervalMs(5000);
+        prefs.setHistorySamples(300);
+        prefs.setTemperatureUnit("fahrenheit");
+        prefs.setStartPage(5);
+        prefs.setShowDiagnostics(false);
+        prefs.reset();
+        QCOMPARE(prefs.theme(), QString("system"));
+        QCOMPARE(prefs.sensorIntervalMs(), 1000);
+        QCOMPARE(prefs.historySamples(), 90);
+        QCOMPARE(prefs.temperatureUnit(), QString("celsius"));
+        QCOMPARE(prefs.startPage(), 0);
+        QVERIFY(prefs.showDiagnostics());
+        QCOMPARE(prefs.schemaVersion(), 1);
     }
     void preservesExistingSchemaVersion()
     {

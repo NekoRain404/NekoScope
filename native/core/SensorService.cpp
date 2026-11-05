@@ -7,12 +7,6 @@
 
 namespace neko {
 namespace {
-constexpr qsizetype kHistoryLimit = 90;
-void appendHistory(QVariantList &history, double value)
-{
-    history.append(value);
-    if (history.size() > kHistoryLimit) history.removeFirst();
-}
 QVariantMap emptySummary()
 {
     return {{QStringLiteral("cpuUsage"), -1.0}, {QStringLiteral("memoryUsage"), -1.0},
@@ -102,7 +96,7 @@ void SensorService::appendMetric(const QString &id, const QVariantMap &reading)
 {
     auto &samples = metrics_[id].samples;
     samples.append(reading.value(QStringLiteral("value")).toDouble());
-    if (samples.size() > kHistoryLimit) samples.removeFirst();
+    while (samples.size() > historyLimit_) samples.removeFirst();
     auto item = reading;
     item.insert(QStringLiteral("min"), *std::min_element(samples.cbegin(), samples.cend()));
     item.insert(QStringLiteral("max"), *std::max_element(samples.cbegin(), samples.cend()));
@@ -132,6 +126,7 @@ void SensorService::applySnapshot(const SensorSnapshot &snapshot)
         appendMetric(id, {{QStringLiteral("id"), id}, {QStringLiteral("name"), snapshot.names.value(id)},
                          {QStringLiteral("group"), snapshot.groups.value(id)}, {QStringLiteral("value"), it.value()},
                          {QStringLiteral("unit"), snapshot.units.value(id)}, {QStringLiteral("source"), snapshot.sources.value(id)},
+                         {QStringLiteral("deviceId"), snapshot.deviceIds.value(id)}, {QStringLiteral("device"), snapshot.deviceNames.value(id)},
                          {QStringLiteral("status"), QStringLiteral("available")}, {QStringLiteral("updatedAt"), timestamp}});
     }
     if (values.contains(QStringLiteral("cpu.usage"))) appendHistory(cpuHistory_, values.value(QStringLiteral("cpu.usage")).toDouble());
@@ -146,6 +141,25 @@ void SensorService::applySnapshot(const SensorSnapshot &snapshot)
     summary_.insert(QStringLiteral("sensorCount"), readings_.size());
     summary_.insert(QStringLiteral("updatedAt"), timestamp);
     emit readingsChanged();
+}
+
+void SensorService::appendHistory(QVariantList &history, double value)
+{
+    history.append(value);
+    while (history.size() > historyLimit_) history.removeFirst();
+}
+
+void SensorService::setHistoryLimit(int limit)
+{
+    limit = std::clamp(limit, 10, 600);
+    if (historyLimit_ == limit) return;
+    historyLimit_ = limit;
+    for (auto &metric : metrics_) {
+        while (metric.samples.size() > historyLimit_) metric.samples.removeFirst();
+    }
+    while (cpuHistory_.size() > historyLimit_) cpuHistory_.removeFirst();
+    while (temperatureHistory_.size() > historyLimit_) temperatureHistory_.removeFirst();
+    emit historyLimitChanged();
 }
 
 void SensorService::resetStatistics()

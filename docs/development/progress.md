@@ -132,3 +132,24 @@ redact WWID, serial, MAC and hostname; the raw WWID never appears.
 - `--dump-inventory`: exit 0, valid JSON, 57 devices, redacted; WWID/serial/MAC/hostname masked; raw `eui.` count 0.
 - H5 Playwright: 12/12 pass.
 - Final whole-branch review: clean after one fix wave (`6efcf69`).
+
+## Grouped navigation and preferences (2026-11-05)
+
+- Sensors page now groups by physical device (CPU, GPU, NVMe, Storage, Memory,
+  Battery, Network, Motherboard, System, unknown hwmon chips) and then by sensor
+  category, with collapsible headers, per-group counts, expand/collapse all,
+  search that temporarily expands matches, and a flat mode.
+- Hardware device tree now groups devices by inventory category with collapsible
+  headers and counts; the repeated per-device category label is suppressed while
+  grouped.
+- Every sensor reading carries `deviceId` and `device`; unknown hwmon chips keep
+  a stable `hwmon:<canonical-path>` identifier and their raw chip name.
+- Preferences add: sample interval (0.5/1/2/5 s), history samples
+  (30/60/90/150/300), Celsius/Fahrenheit, diagnostics visibility, start page,
+  and reset-to-defaults with confirmation. The live sampling timer and sensor
+  history bound follow these settings immediately.
+- New tests cover device identity, configurable history bounds and preference
+  validation/round-trip/reset.
+- Verification: CTest 5/5, qmllint exit 0, offscreen and XWayland smoke exit 0
+  with zero QML warnings; real screenshots captured for sensors, hardware and
+  settings.

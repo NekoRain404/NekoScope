@@ -22,6 +22,7 @@
 #include <QStyleHints>
 #include <QTimer>
 #include <memory>
+#include <cstdio>
 
 namespace {
 void identity()
@@ -95,6 +96,7 @@ int main(int argc, char *argv[])
 #endif
     neko::HardwareService hardware;
     neko::SensorService sensors;
+    sensors.setHistoryLimit(preferences.historySamples());
     neko::TestRunner tests;
     neko::ReportService reports(hardware, sensors, tests);
     QQmlApplicationEngine engine;
@@ -105,7 +107,13 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("reports", &reports);
     QObject::connect(&sensors, &neko::SensorService::temperatureSampled, &tests, &neko::TestRunner::observeTemperature);
     int warnings = 0;
-    QObject::connect(&engine, &QQmlEngine::warnings, &app, [&warnings](const QList<QQmlError> &errors) { warnings += errors.size(); });
+    QObject::connect(&engine, &QQmlEngine::warnings, &app, [&warnings](const QList<QQmlError> &errors) {
+        warnings += errors.size();
+        // Qt's own warning text can be suppressed in some builds; keep the
+        // smoke harness diagnosable by writing each warning to stderr.
+        for (const auto &error : errors)
+            std::fprintf(stderr, "QML warning: %s\n", error.toString().toUtf8().constData());
+    });
     engine.load(QUrl("qrc:/qt/qml/NekoScope/Main.qml"));
     if (engine.rootObjects().isEmpty()) return 2;
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
@@ -124,8 +132,12 @@ int main(int argc, char *argv[])
     if (window->isSceneGraphInitialized()) publishRenderer();
     hardware.refresh();
     QTimer sampling;
-    sampling.setInterval(1000);
+    sampling.setInterval(preferences.sensorIntervalMs());
     QObject::connect(&sampling, &QTimer::timeout, &sensors, &neko::SensorService::requestSample);
+    QObject::connect(&preferences, &neko::Preferences::changed, &app, [&sampling, &sensors, &preferences] {
+        sampling.setInterval(preferences.sensorIntervalMs());
+        sensors.setHistoryLimit(preferences.historySamples());
+    });
     sampling.start();
     sensors.requestSample();
 

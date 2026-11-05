@@ -9,6 +9,7 @@ QtObject {
     property bool chinese: preferences.language !== "en"
     property color accent: preferences.accent
     property bool reducedMotion: preferences.reducedMotion
+    property bool fahrenheit: preferences.temperatureUnit === "fahrenheit"
 
     // Semantic surfaces.
     property color background: dark ? "#151620" : "#f6f7fa"
@@ -105,6 +106,13 @@ QtObject {
     readonly property int easingDecelerate: Easing.OutQuint
 
     function t(zh, en) { return chinese ? zh : en }
+    function temperature(value) {
+        if (value === undefined || value === null || !Number.isFinite(Number(value))) return NaN
+        const celsius = Number(value)
+        return fahrenheit ? celsius * 9 / 5 + 32 : celsius
+    }
+    function temperatureLabel() { return fahrenheit ? "°F" : "°C" }
+    function temperatureMax() { return fahrenheit ? 212 : 100 }
     function metric(value, digits, allowNegative) {
         return value !== undefined && value !== null && Number.isFinite(Number(value)) && (allowNegative || Number(value) >= 0)
                 ? Number(value).toFixed(digits === undefined ? 1 : digits) : "—"
@@ -198,6 +206,29 @@ QtObject {
             "显卡": ["显卡", "Graphics"], "网络": ["网络", "Network"],
             "显示器": ["显示器", "Displays"], "音频": ["音频", "Audio"],
             "电池": ["电池", "Battery"], "电源": ["电源", "Power"], "系统": ["系统", "System"]}
+        return names[value] ? t(names[value][0], names[value][1]) : value
+    }
+    function deviceName(id, fallback) {
+        const names = {"cpu": ["处理器", "CPU"], "gpu": ["显卡", "GPU"], "nvme": ["NVMe", "NVMe"],
+            "storage": ["存储", "Storage"], "memory": ["内存", "Memory"], "battery": ["电池", "Battery"],
+            "network": ["网络", "Network"], "motherboard": ["主板", "Motherboard"], "system": ["系统", "System"]}
+        return names[id] ? t(names[id][0], names[id][1]) : (fallback || id || t("其他设备", "Other"))
+    }
+    function deviceIcon(id) {
+        if (id === "cpu" || id === "motherboard") return "hardware"
+        if (id === "gpu") return "benchmark"
+        if (id === "storage" || id === "nvme") return "report"
+        if (id === "battery") return "stress"
+        if (id === "network") return "sensors"
+        return "sensors"
+    }
+    function sensorCategory(value) {
+        const names = {"CPU": ["CPU", "CPU"], "CPU cores": ["CPU 核心", "CPU cores"],
+            "Memory": ["内存", "Memory"], "System": ["系统", "System"],
+            "Temperature": ["温度", "Temperature"], "Cooling": ["风扇", "Cooling"],
+            "Voltage": ["电压", "Voltage"], "Power": ["功率", "Power"],
+            "Battery": ["电池", "Battery"], "Disk I/O": ["磁盘 I/O", "Disk I/O"],
+            "Network": ["网络", "Network"], "GPU": ["显卡", "GPU"], "GPU memory": ["显存", "GPU memory"]}
         return names[value] ? t(names[value][0], names[value][1]) : value
     }
     function capability(name) {

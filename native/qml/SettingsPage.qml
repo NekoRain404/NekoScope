@@ -5,6 +5,7 @@ import QtQuick.Layouts
 
 PageView {
     id: page
+    property var pageNames: []
     PageHeader {
         ui: page.ui
         title: page.ui.t("偏好设置", "Make it your own")
@@ -136,6 +137,194 @@ PageView {
                 onToggled: preferences.reducedMotion = checked
                 Accessible.name: page.ui.t("减少动态效果", "Reduce motion")
                 objectName: "reducedMotionSwitch"
+            }
+        }
+    }
+    Panel {
+        ui: page.ui
+        Layout.fillWidth: true
+        spacing: page.ui.space4
+        SectionHeader {
+            ui: page.ui
+            title: page.ui.t("传感器与数据", "Sensors & data")
+            detail: page.ui.t("更改即时生效并自动保存", "Changes apply and save immediately")
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: page.ui.space5
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: page.ui.space1
+                Label {
+                    text: page.ui.t("采样间隔", "Sample interval")
+                    color: page.ui.text
+                    font.pixelSize: page.ui.fontBody
+                    font.weight: Font.Medium
+                }
+                Label {
+                    text: page.ui.t("更短的间隔更实时，但会增加唤醒与系统读取。", "Shorter intervals are more responsive but wake the system more often.")
+                    color: page.ui.muted
+                    font.pixelSize: page.ui.fontSmall
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+            }
+            SelectBox {
+                ui: page.ui
+                model: ["0.5 s", "1 s", "2 s", "5 s"]
+                currentIndex: Math.max(0, [500, 1000, 2000, 5000].indexOf(preferences.sensorIntervalMs))
+                onActivated: preferences.sensorIntervalMs = [500, 1000, 2000, 5000][currentIndex]
+                Layout.preferredWidth: 210
+                objectName: "sensorIntervalSelector"
+            }
+        }
+        Rectangle { height: page.ui.borderWidth; color: page.ui.borderSubtle; Layout.fillWidth: true }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: page.ui.space5
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: page.ui.space1
+                Label {
+                    text: page.ui.t("历史采样数", "History samples")
+                    color: page.ui.text
+                    font.pixelSize: page.ui.fontBody
+                    font.weight: Font.Medium
+                }
+                Label {
+                    text: page.ui.t("图表与统计保留的最近采样数量。", "Number of recent samples kept for charts and statistics.")
+                    color: page.ui.muted
+                    font.pixelSize: page.ui.fontSmall
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+            }
+            SelectBox {
+                ui: page.ui
+                model: [30, 60, 90, 150, 300]
+                currentIndex: Math.max(0, [30, 60, 90, 150, 300].indexOf(preferences.historySamples))
+                onActivated: preferences.historySamples = [30, 60, 90, 150, 300][currentIndex]
+                Layout.preferredWidth: 210
+                objectName: "historySamplesSelector"
+            }
+        }
+        Rectangle { height: page.ui.borderWidth; color: page.ui.borderSubtle; Layout.fillWidth: true }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: page.ui.space5
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: page.ui.space1
+                Label {
+                    text: page.ui.t("温度单位", "Temperature unit")
+                    color: page.ui.text
+                    font.pixelSize: page.ui.fontBody
+                    font.weight: Font.Medium
+                }
+                Label {
+                    text: page.ui.t("应用于传感器、图表与硬件温度字段。", "Applied to sensors, charts and hardware temperature fields.")
+                    color: page.ui.muted
+                    font.pixelSize: page.ui.fontSmall
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+            }
+            SelectBox {
+                ui: page.ui
+                model: [page.ui.t("摄氏度 (°C)", "Celsius (°C)"), page.ui.t("华氏度 (°F)", "Fahrenheit (°F)")]
+                currentIndex: preferences.temperatureUnit === "fahrenheit" ? 1 : 0
+                onActivated: preferences.temperatureUnit = currentIndex === 0 ? "celsius" : "fahrenheit"
+                Layout.preferredWidth: 210
+                objectName: "temperatureUnitSelector"
+            }
+        }
+        Rectangle { height: page.ui.borderWidth; color: page.ui.borderSubtle; Layout.fillWidth: true }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: page.ui.space5
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: page.ui.space1
+                Label {
+                    text: page.ui.t("显示诊断信息", "Show diagnostics")
+                    color: page.ui.text
+                    font.pixelSize: page.ui.fontBody
+                    font.weight: Font.Medium
+                }
+                Label {
+                    text: page.ui.t("在字段下显示来源、状态与读取原因。", "Show source, status and read reasons under each field.")
+                    color: page.ui.muted
+                    font.pixelSize: page.ui.fontSmall
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+            }
+            ToggleSwitch {
+                ui: page.ui
+                checked: preferences.showDiagnostics
+                onToggled: preferences.showDiagnostics = checked
+                Accessible.name: page.ui.t("显示诊断信息", "Show diagnostics")
+                objectName: "showDiagnosticsSwitch"
+            }
+        }
+        Rectangle { height: page.ui.borderWidth; color: page.ui.borderSubtle; Layout.fillWidth: true }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: page.ui.space5
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: page.ui.space1
+                Label {
+                    text: page.ui.t("启动页面", "Start page")
+                    color: page.ui.text
+                    font.pixelSize: page.ui.fontBody
+                    font.weight: Font.Medium
+                }
+                Label {
+                    text: page.ui.t("每次启动应用时首先打开的页面。", "The page opened when the application starts.")
+                    color: page.ui.muted
+                    font.pixelSize: page.ui.fontSmall
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+            }
+            SelectBox {
+                ui: page.ui
+                model: page.pageNames
+                currentIndex: preferences.startPage
+                onActivated: preferences.startPage = currentIndex
+                Layout.preferredWidth: 210
+                enabled: page.pageNames.length > 0
+                objectName: "startPageSelector"
+            }
+        }
+        Rectangle { height: page.ui.borderWidth; color: page.ui.borderSubtle; Layout.fillWidth: true }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: page.ui.space5
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: page.ui.space1
+                Label {
+                    text: page.ui.t("恢复默认设置", "Reset preferences")
+                    color: page.ui.text
+                    font.pixelSize: page.ui.fontBody
+                    font.weight: Font.Medium
+                }
+                Label {
+                    text: page.ui.t("重置外观、语言、传感器与显示选项。", "Reset appearance, language, sensor and display options.")
+                    color: page.ui.muted
+                    font.pixelSize: page.ui.fontSmall
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+            }
+            ActionButton {
+                ui: page.ui
+                danger: true
+                text: page.ui.t("恢复默认", "Reset")
+                onClicked: resetDialog.open()
+                objectName: "resetPreferencesButton"
             }
         }
     }
@@ -282,4 +471,56 @@ PageView {
             message: page.ui.t("压力测试与基准测试需要外部工具；硬件与传感器数据不依赖它们。", "Stress and benchmark tests need external tools; hardware and sensor data do not.")
         }
     }
+    Popup {
+        id: resetDialog
+        modal: true
+        focus: true
+        anchors.centerIn: Overlay.overlay
+        width: 360
+        padding: page.ui.space5
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        background: Rectangle {
+            color: page.ui.panel
+            radius: page.ui.radiusLg
+            border.width: page.ui.borderWidth
+            border.color: page.ui.borderStrong
+        }
+        contentItem: ColumnLayout {
+            spacing: page.ui.space4
+            Label {
+                text: page.ui.t("恢复默认设置？", "Reset preferences?")
+                color: page.ui.text
+                font.pixelSize: page.ui.fontSubtitle
+                font.weight: Font.DemiBold
+                Layout.fillWidth: true
+            }
+            Label {
+                text: page.ui.t("主题、语言、强调色、传感器与显示选项将恢复默认值。", "Theme, language, accent, sensor and display options return to their defaults.")
+                color: page.ui.secondary
+                font.pixelSize: page.ui.fontSmall
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: page.ui.space2
+                Item { Layout.fillWidth: true }
+                ActionButton {
+                    ui: page.ui
+                    compact: true
+                    text: page.ui.t("取消", "Cancel")
+                    onClicked: resetDialog.close()
+                }
+                ActionButton {
+                    ui: page.ui
+                    compact: true
+                    danger: true
+                    text: page.ui.t("恢复默认", "Reset")
+                    onClicked: { preferences.reset(); resetDialog.close() }
+                    objectName: "confirmResetPreferencesButton"
+                }
+            }
+        }
+    }
+
 }

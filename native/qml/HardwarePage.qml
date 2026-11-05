@@ -7,12 +7,60 @@ PageView {
     id: page
     property string selectedId: ""
     property bool showSensitive: false
+    property bool groupedDevices: true
+    property var collapsedCategories: ({})
     readonly property var categories: [ui.t("全部类别", "All categories"), ...Array.from(new Set(hardware.devices.map(item => item.category)))]
     readonly property var filteredDevices: hardware.devices.filter(item =>
         (categoryBox.currentIndex <= 0 || item.category === categories[categoryBox.currentIndex]) &&
         (item.name + " " + item.category + " " + item.subtitle).toLowerCase().includes(search.text.toLowerCase()))
     readonly property var selectedDevice: filteredDevices.find(item => item.id === selectedId) || filteredDevices[0] || ({})
-    readonly property int listHeight: Math.min(620, Math.max(260, 44 + filteredDevices.length * 68))
+    readonly property var displayRows: {
+        if (!groupedDevices) return filteredDevices.map(device => ({ kind: "device", device: device, showCategory: true }))
+        const expand = search.text.length > 0
+        const byCategory = new Map()
+        for (const device of filteredDevices) {
+            if (!byCategory.has(device.category)) byCategory.set(device.category, [])
+            byCategory.get(device.category).push(device)
+        }
+        const rows = []
+        for (const category of Array.from(byCategory.keys()).sort(page.compareCategories)) {
+            const devices = byCategory.get(category)
+            const collapsed = !expand && !!collapsedCategories[category]
+            rows.push({ kind: "category", category: category, count: devices.length, collapsed: collapsed })
+            if (!collapsed) for (const device of devices) rows.push({ kind: "device", device: device, showCategory: false })
+        }
+        return rows
+    }
+    readonly property int listHeight: displayRows.reduce((total, row) =>
+        total + (row.kind === "category" ? 34 : 64) + page.ui.space1, 8)
+    readonly property int collapsedCount: Object.keys(collapsedCategories).filter(key => collapsedCategories[key]).length
+    function categoryRank(category) {
+        const order = ["CPU", "内存", "主板/BIOS", "存储", "显卡", "网络", "显示器", "音频", "电池", "电源", "PCI", "USB", "系统"]
+        const index = order.indexOf(category)
+        return index < 0 ? order.length : index
+    }
+    function compareCategories(a, b) {
+        return categoryRank(a) - categoryRank(b) || String(a).localeCompare(String(b))
+    }
+    function toggleCategory(category) {
+        const next = Object.assign({}, collapsedCategories)
+        next[category] = !next[category]
+        collapsedCategories = next
+    }
+    function toggleAllCategories() {
+        if (collapsedCount > 0) { collapsedCategories = {}; return }
+        const next = {}
+        for (const device of filteredDevices) next[device.category] = true
+        collapsedCategories = next
+    }
+    function fieldText(field) {
+        if (!field) return "—"
+        if (field.value === undefined || field.value === null || String(field.value) === "")
+            return page.ui.status(field.status)
+        if (field.unit === "°C" && Number.isFinite(Number(field.value)))
+            return page.ui.metric(page.ui.temperature(Number(field.value)), 1) + " " + page.ui.temperatureLabel()
+        return String(field.value)
+    }
     PageHeader {
         ui: page.ui
         title: page.ui.t("硬件信息", "Hardware inventory")
@@ -42,6 +90,13 @@ PageView {
             checked: page.showSensitive
             onToggled: page.showSensitive = checked
         }
+        CheckField {
+            ui: page.ui
+            text: page.ui.t("分组显示", "Grouped")
+            checked: page.groupedDevices
+            onToggled: page.groupedDevices = checked
+            objectName: "groupedHardwareToggle"
+        }
     }
     RowLayout {
         Layout.fillWidth: true
@@ -54,14 +109,28 @@ PageView {
             Layout.preferredWidth: page.width > 1080 ? 270 : 226
             Layout.alignment: Qt.AlignTop
             spacing: page.ui.space2
-            Label {
-                text: page.ui.t("设备树", "DEVICES") + " · " + page.filteredDevices.length
-                color: page.ui.muted
-                font.pixelSize: page.ui.fontMicro
-                font.weight: Font.Medium
-                font.letterSpacing: 1.2
+            RowLayout {
+                Layout.fillWidth: true
                 Layout.leftMargin: page.ui.space2
+                Layout.rightMargin: page.ui.space2
                 Layout.topMargin: page.ui.space2
+                Label {
+                    text: page.ui.t("设备树", "DEVICES") + " · " + page.filteredDevices.length
+                    color: page.ui.muted
+                    font.pixelSize: page.ui.fontMicro
+                    font.weight: Font.Medium
+                    font.letterSpacing: 1.2
+                    Layout.fillWidth: true
+                }
+                ActionButton {
+                    ui: page.ui
+                    compact: true
+                    visible: page.groupedDevices && page.filteredDevices.length > 0
+                    text: page.collapsedCount > 0 ? page.ui.t("展开", "Expand") : page.ui.t("收起", "Collapse")
+                    symbol: page.collapsedCount > 0 ? "chevronDown" : "chevronUp"
+                    onClicked: page.toggleAllCategories()
+                    objectName: "collapseAllHardwareButton"
+                }
             }
             ListView {
                 id: deviceList
@@ -70,52 +139,23 @@ PageView {
                 Layout.preferredHeight: page.listHeight
                 clip: true
                 spacing: page.ui.space1
-                model: page.filteredDevices
+                model: page.displayRows
                 ScrollBar.vertical: ScrollBar {}
-                delegate: Button {
-                    id: deviceButton
+                delegate: Item {
+                    id: deviceDelegate
                     required property var modelData
                     width: deviceList.width
-                    implicitHeight: 64
-                    leftPadding: page.ui.space3
-                    rightPadding: page.ui.space3
-                    hoverEnabled: true
-                    Accessible.name: modelData.name
-                    onClicked: page.selectedId = modelData.id
-                    contentItem: Column {
-                        spacing: page.ui.space1
-                        Label {
-                            text: page.ui.category(deviceButton.modelData.category)
-                            color: page.selectedDevice.id === deviceButton.modelData.id ? page.ui.accent : page.ui.muted
-                            font.pixelSize: page.ui.fontMicro
-                            font.weight: Font.Medium
-                            font.letterSpacing: 0.4
-                        }
-                        Label {
-                            width: parent.width
-                            text: deviceButton.modelData.name
-                            elide: Text.ElideRight
-                            color: page.ui.text
-                            font.pixelSize: page.ui.fontSmall
-                            font.weight: page.selectedDevice.id === deviceButton.modelData.id ? Font.Medium : Font.Normal
-                        }
-                    }
-                    background: Rectangle {
-                        radius: page.ui.radiusMd
-                        color: page.selectedDevice.id === deviceButton.modelData.id ? page.ui.accentSoft
-                             : deviceButton.hovered ? page.ui.soft : "transparent"
-                        border.width: deviceButton.activeFocus ? page.ui.focusWidth : 0
-                        border.color: page.ui.focusRing
-                        Behavior on color { ColorAnimation { duration: page.ui.durationFast } }
-                        Rectangle {
-                            x: 0
-                            anchors.verticalCenter: parent.verticalCenter
-                            width: 3
-                            height: 22
-                            radius: page.ui.radiusPill
-                            color: page.ui.accent
-                            opacity: page.selectedDevice.id === deviceButton.modelData.id ? 1 : 0
-                            Behavior on opacity { NumberAnimation { duration: page.ui.durationFast } }
+                    height: modelData.kind === "category" ? 34 : 64
+                    Loader {
+                        id: deviceLoader
+                        anchors.fill: parent
+                        property var rowData: deviceDelegate.modelData
+                        sourceComponent: rowData.kind === "category" ? hardwareCategoryHeader : hardwareDeviceButton
+                        Binding {
+                            target: deviceLoader.item
+                            property: "rowData"
+                            value: deviceLoader.rowData
+                            when: deviceLoader.item !== null
                         }
                     }
                 }
@@ -220,8 +260,7 @@ PageView {
                     delegate: ColumnLayout {
                         id: fieldRow
                         required property var modelData
-                        readonly property string valueText: modelData.value === undefined || modelData.value === null || String(modelData.value) === ""
-                                                                ? page.ui.status(modelData.status) : String(modelData.value)
+                        readonly property string valueText: page.fieldText(modelData)
                         Layout.fillWidth: true
                         spacing: page.ui.space2
                         RowLayout {
@@ -256,6 +295,9 @@ PageView {
                             }
                         }
                         Label {
+                            readonly property bool showLine: preferences.showDiagnostics ||
+                                                             fieldRow.modelData.status !== "available"
+                            visible: showLine
                             text: {
                                 const reason = fieldRow.modelData.reason ? page.ui.fieldReason(fieldRow.modelData.reason) : ""
                                 return page.ui.status(fieldRow.modelData.status) + (reason ? " · " + reason : "")
@@ -277,4 +319,101 @@ PageView {
             }
         }
     }
+    Component {
+        id: hardwareCategoryHeader
+        Item {
+            property var rowData
+            Button {
+                id: categoryButton
+                anchors.fill: parent
+                hoverEnabled: true
+                Accessible.name: rowData ? page.ui.category(rowData.category) : ""
+                onClicked: if (rowData) page.toggleCategory(rowData.category)
+                background: Rectangle {
+                    radius: page.ui.radiusSm
+                    color: categoryButton.hovered ? page.ui.soft : "transparent"
+                    Behavior on color { ColorAnimation { duration: page.ui.durationFast } }
+                }
+                contentItem: RowLayout {
+                    spacing: page.ui.space1
+                    Icon {
+                        name: "chevronDown"
+                        color: page.ui.muted
+                        implicitWidth: 12
+                        implicitHeight: 12
+                        rotation: rowData && rowData.collapsed ? -90 : 0
+                        Behavior on rotation { NumberAnimation { duration: page.ui.durationFast } }
+                    }
+                    Label {
+                        text: rowData ? page.ui.category(rowData.category) : ""
+                        color: page.ui.secondary
+                        font.pixelSize: page.ui.fontMicro
+                        font.weight: Font.DemiBold
+                        font.letterSpacing: 0.8
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                    }
+                    Label {
+                        text: rowData ? rowData.count : ""
+                        color: page.ui.muted
+                        font.pixelSize: page.ui.fontMicro
+                    }
+                }
+            }
+        }
+    }
+    Component {
+        id: hardwareDeviceButton
+        Item {
+            property var rowData
+            readonly property var device: rowData ? rowData.device : ({})
+            Button {
+                id: deviceButton
+                anchors.fill: parent
+                leftPadding: page.ui.space3
+                rightPadding: page.ui.space3
+                hoverEnabled: true
+                Accessible.name: device.name || ""
+                onClicked: page.selectedId = device.id
+                contentItem: Column {
+                    spacing: page.ui.space1
+                    Label {
+                        visible: rowData && rowData.showCategory
+                        text: page.ui.category(device.category)
+                        color: page.selectedDevice.id === device.id ? page.ui.accent : page.ui.muted
+                        font.pixelSize: page.ui.fontMicro
+                        font.weight: Font.Medium
+                        font.letterSpacing: 0.4
+                    }
+                    Label {
+                        width: parent.width
+                        text: device.name || ""
+                        elide: Text.ElideRight
+                        color: page.ui.text
+                        font.pixelSize: page.ui.fontSmall
+                        font.weight: page.selectedDevice.id === device.id ? Font.Medium : Font.Normal
+                    }
+                }
+                background: Rectangle {
+                    radius: page.ui.radiusMd
+                    color: page.selectedDevice.id === device.id ? page.ui.accentSoft
+                         : deviceButton.hovered ? page.ui.soft : "transparent"
+                    border.width: deviceButton.activeFocus ? page.ui.focusWidth : 0
+                    border.color: page.ui.focusRing
+                    Behavior on color { ColorAnimation { duration: page.ui.durationFast } }
+                    Rectangle {
+                        x: 0
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 3
+                        height: 22
+                        radius: page.ui.radiusPill
+                        color: page.ui.accent
+                        opacity: page.selectedDevice.id === device.id ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: page.ui.durationFast } }
+                    }
+                }
+            }
+        }
+    }
+
 }

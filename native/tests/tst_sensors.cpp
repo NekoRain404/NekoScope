@@ -48,6 +48,8 @@ private slots:
     void pauseStillReportsUnavailableTemperature();
     void faultedAndDisabledChannelsAreUnavailable();
     void cpuPowerUsesEnergyDeltasAndWrapRange();
+    void readingsCarryDeviceIdentity();
+    void historyLimitIsConfigurable();
 private:
     QTemporaryDir settingsDir_;
 };
@@ -358,4 +360,67 @@ void SensorServiceTest::cpuPowerUsesEnergyDeltasAndWrapRange()
 }
 
 QTEST_GUILESS_MAIN(SensorServiceTest)
+void SensorServiceTest::readingsCarryDeviceIdentity()
+{
+    QTemporaryDir root;
+    QVERIFY(writeFile(root.filePath("stat"),
+                      "cpu 1000 0 0 1000 0 0 0 0 0 0\ncpu0 1000 0 0 1000 0 0 0 0 0 0\n"));
+    QVERIFY(writeFile(root.filePath("meminfo"), "MemTotal: 1000 kB\nMemAvailable: 500 kB\n"));
+    QVERIFY(writeFile(root.filePath("class/hwmon/hwmon0/name"), "coretemp\n"));
+    QVERIFY(writeFile(root.filePath("class/hwmon/hwmon0/temp1_input"), "42000\n"));
+    QVERIFY(writeFile(root.filePath("class/hwmon/hwmon1/name"), "fixture-chip\n"));
+    QVERIFY(writeFile(root.filePath("class/hwmon/hwmon1/temp1_input"), "31000\n"));
+    QVERIFY(writeFile(root.filePath("class/power_supply/BAT0/type"), "Battery\n"));
+    QVERIFY(writeFile(root.filePath("class/power_supply/BAT0/capacity"), "80\n"));
+    QVERIFY(writeFile(root.filePath("class/drm/card0/device/gpu_busy_percent"), "42\n"));
+    neko::SensorService service(root.path(), root.path());
+    service.sample();
+    QVERIFY(writeFile(root.filePath("stat"),
+                      "cpu 1050 0 0 1050 0 0 0 0 0 0\ncpu0 1050 0 0 1050 0 0 0 0 0 0\n"));
+    service.sample();
+
+    const auto cpu = reading(service, QStringLiteral("cpu.usage"));
+    QCOMPARE(cpu.value(QStringLiteral("deviceId")).toString(), QStringLiteral("cpu"));
+    QCOMPARE(cpu.value(QStringLiteral("device")).toString(), QStringLiteral("CPU"));
+    QCOMPARE(reading(service, QStringLiteral("memory.used")).value(QStringLiteral("deviceId")).toString(),
+             QStringLiteral("memory"));
+    QCOMPARE(reading(service, QStringLiteral("battery.BAT0.charge")).value(QStringLiteral("deviceId")).toString(),
+             QStringLiteral("battery"));
+    QCOMPARE(reading(service, QStringLiteral("gpu.card0.usage")).value(QStringLiteral("deviceId")).toString(),
+             QStringLiteral("gpu"));
+
+    QVariantMap cpuChip, unknownChip;
+    for (const auto &entry : service.readings()) {
+        const auto item = entry.toMap();
+        if (item.value(QStringLiteral("group")).toString() != QStringLiteral("Temperature")) continue;
+        if (item.value(QStringLiteral("name")).toString().startsWith(QStringLiteral("coretemp"))) cpuChip = item;
+        if (item.value(QStringLiteral("name")).toString().startsWith(QStringLiteral("fixture-chip"))) unknownChip = item;
+    }
+    QVERIFY(!cpuChip.isEmpty());
+    QCOMPARE(cpuChip.value(QStringLiteral("deviceId")).toString(), QStringLiteral("cpu"));
+    QCOMPARE(cpuChip.value(QStringLiteral("device")).toString(), QStringLiteral("CPU"));
+    QVERIFY(!unknownChip.isEmpty());
+    QVERIFY(unknownChip.value(QStringLiteral("deviceId")).toString().startsWith(QStringLiteral("hwmon:")));
+    QCOMPARE(unknownChip.value(QStringLiteral("device")).toString(), QStringLiteral("fixture-chip"));
+}
+
+void SensorServiceTest::historyLimitIsConfigurable()
+{
+    QTemporaryDir root;
+    const auto channel = root.filePath("class/hwmon/hwmon0/temp1_input");
+    QVERIFY(writeFile(root.filePath("class/hwmon/hwmon0/name"), "coretemp\n"));
+    neko::SensorService service(root.path(), root.path());
+    service.setHistoryLimit(10);
+    QCOMPARE(service.historyLimit(), 10);
+    for (int i = 0; i < 15; ++i) {
+        QVERIFY(writeFile(channel, QByteArray::number(40000 + i * 1000) + "\n"));
+        service.sample();
+    }
+    QCOMPARE(service.temperatureHistory().size(), 10);
+    service.setHistoryLimit(20);
+    QCOMPARE(service.historyLimit(), 20);
+    service.setHistoryLimit(10000);
+    QCOMPARE(service.historyLimit(), 600);
+}
+
 #include "tst_sensors.moc"
