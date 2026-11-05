@@ -151,15 +151,64 @@ SensorSnapshot SensorCollector::collect(Clock::time_point now)
     const auto loadavg = readText(procRoot_ + QStringLiteral("/loadavg")).split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
     if (!loadavg.isEmpty()) { bool ok = false; const double value = loadavg.first().toDouble(&ok); if (ok) add(QStringLiteral("system.load1"), QStringLiteral("Load average (1 min)"), QStringLiteral("System"), value, QStringLiteral(""), procRoot_ + QStringLiteral("/loadavg")); }
 
-    // Frequency policy and CPU power are reported as physical kernel attributes.
-    QDir policies(sysRoot_ + QStringLiteral("/devices/system/cpu/cpufreq"));
-    for (const auto &policy : policies.entryList(QStringList{QStringLiteral("policy*")}, QDir::Dirs | QDir::NoDotAndDotDot)) {
+    // Per-CPU frequency is the unit s-tui and HWiNFO present, with policy
+    // granularity retained as a fallback for kernels that expose only policies.
+    QDir cpuRoot(sysRoot_ + QStringLiteral("/devices/system/cpu"));
+    auto cpuDirs = cpuRoot.entryList(QStringList{QStringLiteral("cpu[0-9]*")}, QDir::Dirs | QDir::NoDotAndDotDot);
+    std::sort(cpuDirs.begin(), cpuDirs.end(), [](const QString &a, const QString &b) {
+        return a.mid(3).toInt() < b.mid(3).toInt();
+    });
+    double freqSum = 0.0, freqMax = 0.0, freqMin = 0.0;
+    int freqCount = 0;
+    QStringList freqSources, maxSources, minSources;
+    for (const auto &cpu : cpuDirs) {
+        const auto base = cpuRoot.filePath(cpu + QStringLiteral("/cpufreq"));
+        const auto currentPath = base + QStringLiteral("/scaling_cur_freq");
         double khz = 0;
-        if (readNumber(policies.filePath(policy + QStringLiteral("/scaling_cur_freq")), khz)) {
-            addFor(QStringLiteral("cpu.frequency.") + policy.mid(6), QStringLiteral("CPU frequency ") + policy.mid(6), QStringLiteral("CPU"), khz / 1000000.0, QStringLiteral("GHz"), policies.filePath(policy + QStringLiteral("/scaling_cur_freq")), QStringLiteral("cpu"), QStringLiteral("CPU"));
-            if (!values.contains(QStringLiteral("cpu.frequency"))) addFor(QStringLiteral("cpu.frequency"), QStringLiteral("CPU frequency"), QStringLiteral("CPU"), khz / 1000000.0, QStringLiteral("GHz"), policies.filePath(policy + QStringLiteral("/scaling_cur_freq")), QStringLiteral("cpu"), QStringLiteral("CPU"));
+        if (readNumber(currentPath, khz)) {
+            const QString core = cpu.mid(3);
+            addFor(QStringLiteral("cpu.frequency.core.") + core,
+                   QStringLiteral("Core ") + core + QStringLiteral(" frequency"),
+                   QStringLiteral("Frequency"), khz / 1000.0, QStringLiteral("MHz"),
+                   currentPath, QStringLiteral("cpu"), QStringLiteral("CPU"));
+            freqSum += khz; ++freqCount; freqSources.append(currentPath);
         }
+        double maxKhz = 0, minKhz = 0;
+        const auto maxPath = base + QStringLiteral("/cpuinfo_max_freq");
+        const auto minPath = base + QStringLiteral("/cpuinfo_min_freq");
+        if (!readNumber(maxPath, maxKhz)) readNumber(base + QStringLiteral("/scaling_max_freq"), maxKhz);
+        if (!readNumber(minPath, minKhz)) readNumber(base + QStringLiteral("/scaling_min_freq"), minKhz);
+        if (maxKhz > 0 && maxKhz > freqMax) { freqMax = maxKhz; maxSources = {maxPath}; }
+        if (minKhz > 0 && (freqMin == 0.0 || minKhz < freqMin)) { freqMin = minKhz; minSources = {minPath}; }
     }
+    if (freqCount > 0) {
+        addFor(QStringLiteral("cpu.frequency"), QStringLiteral("CPU frequency"),
+               QStringLiteral("Frequency"), freqSum / freqCount / 1000.0, QStringLiteral("MHz"),
+               freqSources.join(QStringLiteral("; ")), QStringLiteral("cpu"), QStringLiteral("CPU"));
+    } else {
+        QDir policies(sysRoot_ + QStringLiteral("/devices/system/cpu/cpufreq"));
+        for (const auto &policy : policies.entryList(QStringList{QStringLiteral("policy*")}, QDir::Dirs | QDir::NoDotAndDotDot)) {
+            double khz = 0;
+            const auto path = policies.filePath(policy + QStringLiteral("/scaling_cur_freq"));
+            if (!readNumber(path, khz)) continue;
+            addFor(QStringLiteral("cpu.frequency.") + policy.mid(6),
+                   QStringLiteral("CPU frequency ") + policy.mid(6), QStringLiteral("Frequency"),
+                   khz / 1000.0, QStringLiteral("MHz"), path, QStringLiteral("cpu"), QStringLiteral("CPU"));
+            freqSum += khz; ++freqCount; freqSources.append(path);
+        }
+        if (freqCount > 0)
+            addFor(QStringLiteral("cpu.frequency"), QStringLiteral("CPU frequency"),
+                   QStringLiteral("Frequency"), freqSum / freqCount / 1000.0, QStringLiteral("MHz"),
+                   freqSources.join(QStringLiteral("; ")), QStringLiteral("cpu"), QStringLiteral("CPU"));
+    }
+    if (freqMax > 0)
+        addFor(QStringLiteral("cpu.frequency.max"), QStringLiteral("CPU maximum frequency"),
+               QStringLiteral("Frequency"), freqMax / 1000.0, QStringLiteral("MHz"),
+               maxSources.join(QStringLiteral("; ")), QStringLiteral("cpu"), QStringLiteral("CPU"));
+    if (freqMin > 0)
+        addFor(QStringLiteral("cpu.frequency.min"), QStringLiteral("CPU minimum frequency"),
+               QStringLiteral("Frequency"), freqMin / 1000.0, QStringLiteral("MHz"),
+               minSources.join(QStringLiteral("; ")), QStringLiteral("cpu"), QStringLiteral("CPU"));
     QDir powercap(sysRoot_ + QStringLiteral("/class/powercap"));
     double packagePower = 0.0;
     qsizetype packageCount = 0, sampledPackages = 0;

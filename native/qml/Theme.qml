@@ -228,7 +228,8 @@ QtObject {
             "Temperature": ["温度", "Temperature"], "Cooling": ["风扇", "Cooling"],
             "Voltage": ["电压", "Voltage"], "Power": ["功率", "Power"],
             "Battery": ["电池", "Battery"], "Disk I/O": ["磁盘 I/O", "Disk I/O"],
-            "Network": ["网络", "Network"], "GPU": ["显卡", "GPU"], "GPU memory": ["显存", "GPU memory"]}
+            "Network": ["网络", "Network"], "GPU": ["显卡", "GPU"], "GPU memory": ["显存", "GPU memory"],
+            "Frequency": ["频率", "Frequency"]}
         return names[value] ? t(names[value][0], names[value][1]) : value
     }
     function capability(name) {

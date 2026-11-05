@@ -77,7 +77,10 @@ int main(int argc, char *argv[])
                            QStringLiteral("Verify all pages, themes and languages then exit")),
         QCommandLineOption(QStringLiteral("snapshot"),
                            QStringLiteral("Save a window screenshot then exit"),
-                           QStringLiteral("path"))});
+                           QStringLiteral("path")),
+        QCommandLineOption(QStringLiteral("page"),
+                           QStringLiteral("Open a page index (0-6) before verification"),
+                           QStringLiteral("index"))});
     parser.process(app);
 
     const bool smoke = parser.isSet("smoke-test");
@@ -118,6 +121,12 @@ int main(int argc, char *argv[])
     if (engine.rootObjects().isEmpty()) return 2;
     auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
     if (!window) { qCritical("Main.qml must create an ApplicationWindow"); return 2; }
+    if (parser.isSet("page")) {
+        bool ok = false;
+        const int page = parser.value("page").toInt(&ok);
+        if (!ok || page < 0 || page > 6) { qCritical("--page must be 0-6"); return 2; }
+        QMetaObject::invokeMethod(window, "navigateTo", Q_ARG(QVariant, page));
+    }
     const auto publishRenderer = [window, &hardware] {
         const auto name = graphicsName(window->rendererInterface()->graphicsApi());
         QMetaObject::invokeMethod(&hardware, [&hardware, name] {

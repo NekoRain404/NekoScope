@@ -66,13 +66,20 @@ PageView {
         return deviceRank(a) - deviceRank(b) || page.deviceDisplay(a).localeCompare(page.deviceDisplay(b))
     }
     function compareCategories(a, b) {
-        const order = ["Temperature", "Cooling", "Voltage", "Power", "CPU", "CPU cores", "GPU",
+        const order = ["Frequency", "Temperature", "Cooling", "Voltage", "Power", "CPU", "CPU cores", "GPU",
             "GPU memory", "Memory", "Battery", "Disk I/O", "Network", "System"]
         const ai = order.indexOf(a), bi = order.indexOf(b)
         return (ai < 0 ? order.length : ai) - (bi < 0 ? order.length : bi) || String(a).localeCompare(String(b))
     }
     function displayMetric(reading, value) {
+        if (reading.unit === "MHz") {
+            const number = Number(value)
+            return Number.isFinite(number) ? Math.round(number) : NaN
+        }
         return reading.unit === "°C" ? page.ui.temperature(value) : value
+    }
+    function displayDigits(reading) {
+        return reading.unit === "MHz" ? 0 : 1
     }
     function displayUnit(reading) {
         return reading.unit === "°C" ? page.ui.temperatureLabel() : reading.unit
@@ -113,11 +120,14 @@ PageView {
             objectName: "resetSensorsButton"
         }
     }
-    RowLayout {
+    GridLayout {
         Layout.fillWidth: true
-        spacing: page.ui.space4
+        columns: page.width > 1150 ? 4 : 2
+        columnSpacing: page.ui.space4
+        rowSpacing: page.ui.space4
         MetricCard {
             ui: page.ui
+            Layout.fillWidth: true
             title: page.ui.t("CPU 使用率", "CPU usage")
             value: page.ui.metric(sensors.summary.cpuUsage, 1)
             unit: "%"
@@ -125,19 +135,31 @@ PageView {
         }
         MetricCard {
             ui: page.ui
-            title: page.ui.t("内存使用率", "Memory usage")
-            value: page.ui.metric(sensors.summary.memoryUsage, 1)
-            unit: "%"
-            detail: page.ui.metric(sensors.summary.memoryUsedGiB, 1) + " / " + page.ui.metric(sensors.summary.memoryTotalGiB, 1) + " GiB"
-            tone: page.ui.green
+            Layout.fillWidth: true
+            title: page.ui.t("CPU 频率", "CPU frequency")
+            value: page.ui.metric(sensors.summary.cpuFrequencyGHz, 2)
+            unit: "GHz"
+            detail: page.ui.t("最高 ", "Max ") + page.ui.metric(sensors.summary.cpuFrequencyMaxGHz, 2)
+                    + " · " + page.ui.t("最低 ", "Min ") + page.ui.metric(sensors.summary.cpuFrequencyMinGHz, 2) + " GHz"
+            tone: page.ui.accent
         }
         MetricCard {
             ui: page.ui
+            Layout.fillWidth: true
             title: page.ui.t("CPU 温度", "CPU temperature")
             value: page.ui.metric(page.ui.temperature(sensors.summary.cpuTemperature), 1)
             unit: page.ui.temperatureLabel()
             detail: page.ui.t("无可用通道时显示 —", "— indicates no readable channel")
             tone: page.ui.warning
+        }
+        MetricCard {
+            ui: page.ui
+            Layout.fillWidth: true
+            title: page.ui.t("内存使用率", "Memory usage")
+            value: page.ui.metric(sensors.summary.memoryUsage, 1)
+            unit: "%"
+            detail: page.ui.metric(sensors.summary.memoryUsedGiB, 1) + " / " + page.ui.metric(sensors.summary.memoryTotalGiB, 1) + " GiB"
+            tone: page.ui.green
         }
     }
     Panel {
@@ -433,7 +455,7 @@ PageView {
                         required property var modelData
                         required property int index
                         text: reading.status === "available"
-                              ? page.ui.metric(page.displayMetric(reading, modelData), 1, true)
+                              ? page.ui.metric(page.displayMetric(reading, modelData), page.displayDigits(reading), true)
                                 + (index === 0 ? " " + page.displayUnit(reading) : "")
                               : "—"
                         color: index === 0 ? page.ui.text : page.ui.secondary

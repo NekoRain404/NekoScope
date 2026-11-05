@@ -183,6 +183,26 @@ private slots:
         QCOMPARE(fixture(root).devices, snapshot.devices);
     }
 
+    void cpuFrequencyFieldsAreHumanReadable()
+    {
+        QTemporaryDir root;
+        writeFile(root, QStringLiteral("/proc/cpuinfo"), "processor : 0\nmodel name : Fixture CPU\n");
+        writeFile(root, QStringLiteral("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"), "1000000\n");
+        writeFile(root, QStringLiteral("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq"), "4000000\n");
+        writeFile(root, QStringLiteral("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq"), "400000\n");
+        writeFile(root, QStringLiteral("/sys/devices/system/cpu/cpu1/cpufreq/scaling_cur_freq"), "3000000\n");
+        writeFile(root, QStringLiteral("/sys/devices/system/cpu/cpu1/cpufreq/cpuinfo_max_freq"), "4800000\n");
+        writeFile(root, QStringLiteral("/sys/devices/system/cpu/cpu1/cpufreq/cpuinfo_min_freq"), "400000\n");
+        const auto cpu = deviceById(fixture(root), QStringLiteral("cpu:system"));
+        const auto current = fieldByKey(cpu, QStringLiteral("Current frequency (avg)"));
+        QCOMPARE(current.value(QStringLiteral("value")).toString(), QStringLiteral("2000"));
+        QCOMPARE(current.value(QStringLiteral("unit")).toString(), QStringLiteral("MHz"));
+        QCOMPARE(fieldByKey(cpu, QStringLiteral("Hardware maximum frequency")).value(QStringLiteral("value")).toString(),
+                 QStringLiteral("4800"));
+        QCOMPARE(fieldByKey(cpu, QStringLiteral("Hardware minimum frequency")).value(QStringLiteral("value")).toString(),
+                 QStringLiteral("400"));
+    }
+
     void malformedMeminfoUnitsAreNotAcceptedAsCapacity()
     {
         QTemporaryDir root;

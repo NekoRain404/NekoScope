@@ -153,3 +153,25 @@ redact WWID, serial, MAC and hostname; the raw WWID never appears.
 - Verification: CTest 5/5, qmllint exit 0, offscreen and XWayland smoke exit 0
   with zero QML warnings; real screenshots captured for sensors, hardware and
   settings.
+
+## CPU frequency presentation (2026-11-05)
+
+Reference: s-tui's `FreqSource` uses per-CPU current frequency with an average
+row, per-core rows, a hardware maximum for scale, and marks offline cores rather
+than showing zero. NekoScope now follows the same model:
+
+- The collector reads `/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq`
+  for each online CPU, with policy-level readings as a fallback. Readings use
+  MHz (like s-tui) for precision; the summary and overview cards present GHz.
+- New readings: `Core N frequency`, `CPU frequency` (average),
+  `CPU maximum frequency`, `CPU minimum frequency`, grouped under the
+  `Frequency` sensor category, which now sorts before temperature.
+- The sensors page adds a CPU frequency summary card showing current, maximum
+  and minimum, and displays per-core frequencies as integer MHz.
+- The hardware page adds readable `Current frequency (avg)`,
+  `Hardware maximum frequency` and `Hardware minimum frequency` fields with
+  source and raw kHz `rawValue`, while retaining the raw sysfs attributes.
+- New deterministic tests cover per-core aggregation, max/min and summary
+  conversion, and the hardware inventory fields.
+- `--page <0-6>` was added to the diagnostic CLI so a specific page can be
+  captured with `--snapshot`.

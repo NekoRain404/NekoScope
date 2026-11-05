@@ -50,6 +50,7 @@ private slots:
     void cpuPowerUsesEnergyDeltasAndWrapRange();
     void readingsCarryDeviceIdentity();
     void historyLimitIsConfigurable();
+    void perCoreFrequencyIsAggregated();
 private:
     QTemporaryDir settingsDir_;
 };
@@ -421,6 +422,32 @@ void SensorServiceTest::historyLimitIsConfigurable()
     QCOMPARE(service.historyLimit(), 20);
     service.setHistoryLimit(10000);
     QCOMPARE(service.historyLimit(), 600);
+}
+
+void SensorServiceTest::perCoreFrequencyIsAggregated()
+{
+    QTemporaryDir root;
+    QVERIFY(writeFile(root.filePath("devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"), "1000000\n"));
+    QVERIFY(writeFile(root.filePath("devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq"), "4000000\n"));
+    QVERIFY(writeFile(root.filePath("devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq"), "400000\n"));
+    QVERIFY(writeFile(root.filePath("devices/system/cpu/cpu1/cpufreq/scaling_cur_freq"), "3000000\n"));
+    QVERIFY(writeFile(root.filePath("devices/system/cpu/cpu1/cpufreq/cpuinfo_max_freq"), "4800000\n"));
+    QVERIFY(writeFile(root.filePath("devices/system/cpu/cpu1/cpufreq/cpuinfo_min_freq"), "400000\n"));
+    neko::SensorService service(root.path(), root.path());
+    service.sample();
+
+    const auto core0 = reading(service, QStringLiteral("cpu.frequency.core.0"));
+    QCOMPARE(core0.value(QStringLiteral("value")).toDouble(), 1000.0);
+    QCOMPARE(core0.value(QStringLiteral("unit")).toString(), QStringLiteral("MHz"));
+    QCOMPARE(core0.value(QStringLiteral("group")).toString(), QStringLiteral("Frequency"));
+    QCOMPARE(core0.value(QStringLiteral("deviceId")).toString(), QStringLiteral("cpu"));
+    QCOMPARE(reading(service, QStringLiteral("cpu.frequency.core.1")).value(QStringLiteral("value")).toDouble(), 3000.0);
+    QCOMPARE(reading(service, QStringLiteral("cpu.frequency")).value(QStringLiteral("value")).toDouble(), 2000.0);
+    QCOMPARE(reading(service, QStringLiteral("cpu.frequency.max")).value(QStringLiteral("value")).toDouble(), 4800.0);
+    QCOMPARE(reading(service, QStringLiteral("cpu.frequency.min")).value(QStringLiteral("value")).toDouble(), 400.0);
+    QCOMPARE(service.summary().value(QStringLiteral("cpuFrequencyGHz")).toDouble(), 2.0);
+    QCOMPARE(service.summary().value(QStringLiteral("cpuFrequencyMaxGHz")).toDouble(), 4.8);
+    QCOMPARE(service.summary().value(QStringLiteral("cpuFrequencyMinGHz")).toDouble(), 0.4);
 }
 
 #include "tst_sensors.moc"

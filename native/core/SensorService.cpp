@@ -12,6 +12,7 @@ QVariantMap emptySummary()
     return {{QStringLiteral("cpuUsage"), -1.0}, {QStringLiteral("memoryUsage"), -1.0},
             {QStringLiteral("memoryUsedGiB"), 0.0}, {QStringLiteral("memoryTotalGiB"), 0.0},
             {QStringLiteral("cpuTemperature"), -1.0}, {QStringLiteral("cpuFrequencyGHz"), -1.0},
+            {QStringLiteral("cpuFrequencyMaxGHz"), -1.0}, {QStringLiteral("cpuFrequencyMinGHz"), -1.0},
             {QStringLiteral("cpuPower"), -1.0}, {QStringLiteral("sensorCount"), 0}};
 }
 }
@@ -135,9 +136,17 @@ void SensorService::applySnapshot(const SensorSnapshot &snapshot)
     const std::pair<QString, QString> fields[] = {
         {QStringLiteral("cpuUsage"), QStringLiteral("cpu.usage")}, {QStringLiteral("memoryUsage"), QStringLiteral("memory.usage")},
         {QStringLiteral("memoryUsedGiB"), QStringLiteral("memory.used")}, {QStringLiteral("memoryTotalGiB"), QStringLiteral("memory.total")},
-        {QStringLiteral("cpuTemperature"), QStringLiteral("cpu.temperature")}, {QStringLiteral("cpuFrequencyGHz"), QStringLiteral("cpu.frequency")},
+        {QStringLiteral("cpuTemperature"), QStringLiteral("cpu.temperature")},
         {QStringLiteral("cpuPower"), QStringLiteral("cpu.power")}};
     for (const auto &[key, id] : fields) if (values.contains(id)) summary_.insert(key, values.value(id));
+    // Frequency readings are stored in MHz for per-core precision; the summary
+    // and overview cards present GHz.
+    if (values.contains(QStringLiteral("cpu.frequency")))
+        summary_.insert(QStringLiteral("cpuFrequencyGHz"), values.value(QStringLiteral("cpu.frequency")).toDouble() / 1000.0);
+    if (values.contains(QStringLiteral("cpu.frequency.max")))
+        summary_.insert(QStringLiteral("cpuFrequencyMaxGHz"), values.value(QStringLiteral("cpu.frequency.max")).toDouble() / 1000.0);
+    if (values.contains(QStringLiteral("cpu.frequency.min")))
+        summary_.insert(QStringLiteral("cpuFrequencyMinGHz"), values.value(QStringLiteral("cpu.frequency.min")).toDouble() / 1000.0);
     summary_.insert(QStringLiteral("sensorCount"), readings_.size());
     summary_.insert(QStringLiteral("updatedAt"), timestamp);
     emit readingsChanged();

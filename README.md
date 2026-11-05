@@ -43,6 +43,7 @@ Diagnostics and verification:
 ./build/nekoscope --dump-inventory        # redacted real snapshot as JSON
 QT_QPA_PLATFORM=offscreen ./build/nekoscope --smoke-test --software
 ./build/nekoscope --snapshot /tmp/nekoscope.png
+./build/nekoscope --page 2 --snapshot /tmp/sensors.png   # capture a specific page
 ./build/nekoscope --software              # force software rendering
 ```
 

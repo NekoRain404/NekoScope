@@ -117,6 +117,59 @@ void Collector::appendCpu(InventorySnapshot &snapshot)
                                 QStringLiteral("cpuinfo_min_freq"), QStringLiteral("cpuinfo_max_freq")})
         fields.append(textField(name, frequencyPath + QLatin1Char('/') + name));
 
+    // Present the same per-core current frequency model as the sensors page and
+    // s-tui, keeping the raw kHz attributes above for diagnostics.
+    auto readKhz = [this](const QString &path, double &value) {
+        bool ok = false;
+        const auto raw = readText(path).value.toLongLong(&ok);
+        if (!ok || raw <= 0) return false;
+        value = static_cast<double>(raw);
+        return true;
+    };
+    double frequencySum = 0.0, maximumKhz = 0.0, minimumKhz = 0.0;
+    int frequencyCount = 0;
+    QStringList frequencySources, maximumSources, minimumSources;
+    for (const QString &cpu : cpuDirs) {
+        const QString base = cpuRoot + QLatin1Char('/') + cpu + QStringLiteral("/cpufreq");
+        double khz = 0;
+        if (readKhz(base + QStringLiteral("/scaling_cur_freq"), khz)) {
+            frequencySum += khz;
+            ++frequencyCount;
+            frequencySources.append(base + QStringLiteral("/scaling_cur_freq"));
+        }
+        double maxKhz = 0, minKhz = 0;
+        const QString maxPath = base + QStringLiteral("/cpuinfo_max_freq");
+        const QString minPath = base + QStringLiteral("/cpuinfo_min_freq");
+        if (!readKhz(maxPath, maxKhz)) readKhz(base + QStringLiteral("/scaling_max_freq"), maxKhz);
+        if (!readKhz(minPath, minKhz)) readKhz(base + QStringLiteral("/scaling_min_freq"), minKhz);
+        if (maxKhz > maximumKhz) { maximumKhz = maxKhz; maximumSources = {maxPath}; }
+        if (minKhz > 0 && (minimumKhz == 0.0 || minKhz < minimumKhz)) { minimumKhz = minKhz; minimumSources = {minPath}; }
+    }
+    if (frequencyCount > 0) {
+        QVariantMap current = valueField(QStringLiteral("Current frequency (avg)"),
+                                         QString::number(frequencySum / frequencyCount / 1000.0, 'f', 0),
+                                         frequencySources.join(QStringLiteral("; ")));
+        current.insert(QStringLiteral("unit"), QStringLiteral("MHz"));
+        current.insert(QStringLiteral("rawValue"), frequencySum / frequencyCount);
+        fields.append(current);
+    }
+    if (maximumKhz > 0) {
+        QVariantMap maximum = valueField(QStringLiteral("Hardware maximum frequency"),
+                                         QString::number(maximumKhz / 1000.0, 'f', 0),
+                                         maximumSources.join(QStringLiteral("; ")));
+        maximum.insert(QStringLiteral("unit"), QStringLiteral("MHz"));
+        maximum.insert(QStringLiteral("rawValue"), maximumKhz);
+        fields.append(maximum);
+    }
+    if (minimumKhz > 0) {
+        QVariantMap minimum = valueField(QStringLiteral("Hardware minimum frequency"),
+                                         QString::number(minimumKhz / 1000.0, 'f', 0),
+                                         minimumSources.join(QStringLiteral("; ")));
+        minimum.insert(QStringLiteral("unit"), QStringLiteral("MHz"));
+        minimum.insert(QStringLiteral("rawValue"), minimumKhz);
+        fields.append(minimum);
+    }
+
     snapshot.devices.append(device(QStringLiteral("cpu:system"), QStringLiteral("CPU"), model,
                                    QStringLiteral("%1 logical CPUs, %2 cores").arg(cpuDirs.size()).arg(cores.size()),
                                    QStringLiteral("/proc/cpuinfo, /sys/devices/system/cpu"), fields));
