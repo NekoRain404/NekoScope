@@ -58,18 +58,20 @@ PageView {
     readonly property int collapsedCount: deviceIds.filter(id => !!collapsedDevices[id]).length
 
     function deviceRank(id) {
-        const order = ["cpu", "gpu", "nvme", "storage", "memory", "battery", "network", "motherboard", "system"]
-        const index = order.indexOf(id)
-        return index < 0 ? order.length : index
+        const order = { "cpu": 0, "gpu": 1, "nvme": 2, "storage": 3, "memory": 4,
+                        "battery": 5, "network": 6, "motherboard": 7, "system": 8 }
+        return order[id] === undefined ? 99 : order[id]
     }
     function compareDevices(a, b) {
         return deviceRank(a) - deviceRank(b) || page.deviceDisplay(a).localeCompare(page.deviceDisplay(b))
     }
     function compareCategories(a, b) {
-        const order = ["Frequency", "Temperature", "Cooling", "Voltage", "Power", "CPU", "CPU cores", "GPU",
-            "GPU memory", "Memory", "Battery", "Disk I/O", "Network", "System"]
-        const ai = order.indexOf(a), bi = order.indexOf(b)
-        return (ai < 0 ? order.length : ai) - (bi < 0 ? order.length : bi) || String(a).localeCompare(String(b))
+        const order = { "Frequency": 0, "Temperature": 1, "Cooling": 2, "Voltage": 3, "Power": 4,
+                        "CPU": 5, "CPU cores": 6, "GPU": 7, "GPU memory": 8, "Memory": 9,
+                        "Battery": 10, "Disk I/O": 11, "Network": 12, "System": 13 }
+        const ai = order[a] === undefined ? 99 : order[a]
+        const bi = order[b] === undefined ? 99 : order[b]
+        return ai - bi || String(a).localeCompare(String(b))
     }
     function displayMetric(reading, value) {
         if (reading.unit === "MHz") {

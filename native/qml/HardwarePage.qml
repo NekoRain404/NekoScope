@@ -35,9 +35,9 @@ PageView {
         total + (row.kind === "category" ? 34 : 64) + page.ui.space1, 8)
     readonly property int collapsedCount: Object.keys(collapsedCategories).filter(key => collapsedCategories[key]).length
     function categoryRank(category) {
-        const order = ["CPU", "内存", "主板/BIOS", "存储", "显卡", "网络", "显示器", "音频", "电池", "电源", "PCI", "USB", "系统"]
-        const index = order.indexOf(category)
-        return index < 0 ? order.length : index
+        const order = { "CPU": 0, "内存": 1, "主板/BIOS": 2, "存储": 3, "显卡": 4, "网络": 5,
+                        "显示器": 6, "音频": 7, "电池": 8, "电源": 9, "PCI": 10, "USB": 11, "系统": 12 }
+        return order[category] === undefined ? 99 : order[category]
     }
     function compareCategories(a, b) {
         return categoryRank(a) - categoryRank(b) || String(a).localeCompare(String(b))
@@ -309,7 +309,7 @@ PageView {
                             Layout.fillWidth: true
                         }
                         Rectangle {
-                            height: page.ui.borderWidth
+                            implicitHeight: page.ui.borderWidth
                             color: page.ui.borderSubtle
                             Layout.fillWidth: true
                             Layout.topMargin: page.ui.space1

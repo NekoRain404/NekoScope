@@ -25,12 +25,13 @@ Button {
         Icon {
             visible: control.symbol !== ""
             name: control.symbol
-            color: label.color
+            color: control.primary ? control.ui.accentText
+                 : control.danger ? control.ui.danger
+                 : control.ui.text
             implicitWidth: 16
             implicitHeight: 16
         }
         Label {
-            id: label
             text: control.text
             color: control.primary ? control.ui.accentText
                  : control.danger ? control.ui.danger
@@ -43,7 +44,6 @@ Button {
         }
     }
     background: Rectangle {
-        id: surface
         radius: control.ui.radiusMd
         color: control.primary
              ? control.down ? Qt.darker(control.ui.accent, 1.16)
@@ -68,7 +68,7 @@ Button {
         Rectangle {
             anchors.fill: parent
             anchors.margins: -3
-            radius: surface.radius + 3
+            radius: control.ui.radiusMd + 3
             color: "transparent"
             border.width: control.ui.focusWidth
             border.color: control.ui.focusRing
