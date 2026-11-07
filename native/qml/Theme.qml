@@ -65,7 +65,7 @@ QtObject {
     readonly property int fontHeading: 22
     readonly property int fontDisplay: 28
     readonly property int fontMetric: 30
-    readonly property string fontFamily: Qt.application["font"]["family"] || "Noto Sans"
+    readonly property string fontFamily: "Sans Serif"
     readonly property string monoFamily: "monospace"
 
     // 4 px spacing scale.
