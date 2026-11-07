@@ -475,7 +475,7 @@ PageView {
         id: resetDialog
         modal: true
         focus: true
-        anchors.centerIn: Overlay.overlay
+        anchors.centerIn: parent
         width: 360
         padding: page.ui.space5
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
