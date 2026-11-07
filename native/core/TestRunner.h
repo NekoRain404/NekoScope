@@ -1,7 +1,10 @@
 #pragma once
 
+#include <QElapsedTimer>
+#include <QFutureWatcher>
 #include <QObject>
 #include <QProcess>
+#include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -12,6 +15,9 @@ struct TestCommand
     QString program;
     QStringList arguments;
     QString error;
+    // Stable ASCII key for backend-authored text; the raw error stays for diagnostics.
+    QString errorKey;
+    QVariantMap errorParams;
     QString unit;
     int memoryMiB = 0;
     int threads = 0;
@@ -26,7 +32,8 @@ class TestRunner final : public QObject
 
 public:
     explicit TestRunner(QObject *parent = nullptr, QString stressNgPath = {},
-                        QString sysbenchPath = {});
+                        QString sysbenchPath = {}, QString procRoot = QStringLiteral("/proc"),
+                        QString historyPath = {});
     ~TestRunner() override;
 
     QVariantMap state() const;
@@ -36,7 +43,9 @@ public:
     Q_INVOKABLE bool startStress(QString mode, int load, int threads, int duration, int memoryMiB);
     Q_INVOKABLE bool startBenchmark(QString type, int duration = 10);
     Q_INVOKABLE void stop();
+    // Compatible with existing consumers; new integrations must also report loss.
     void checkTemperature(double celsius);
+    void observeTemperature(bool available, double celsius);
 
     static TestCommand stressCommand(const QString &mode, int load, int threads, int duration,
                                      int memoryMiB, qint64 availableMiB = -1,
@@ -49,40 +58,66 @@ signals:
     void stateChanged();
     void historyChanged();
     void message(const QString &text);
-
-private slots:
-    void onFinished(int exitCode, QProcess::ExitStatus exitStatus);
-    void onError(QProcess::ProcessError error);
+    // Stable ASCII key accompanying backend-authored text for UI translation.
+    void keyedMessage(const QString &key, const QVariantMap &params);
 
 private:
-    bool start(const TestCommand &command, const QString &kind, const QString &type,
+    bool rejectBusy();
+    void begin(const TestCommand &command, const QString &kind, const QString &type,
                int duration, int load);
+    bool launch(const TestCommand &command);
     void appendOutput(const QByteArray &bytes);
-    void setStatus(const QString &status, const QString &message);
-    void finish(const QString &status, const QString &reason, int exitCode = -1,
-                QProcess::ExitStatus exitStatus = QProcess::CrashExit);
-    void terminateProcessGroup();
+    void updateProgress();
+    void updateThermalState();
+    void requestStop(const QString &status, const QString &reason, const QString &reasonKey = {},
+                     const QVariantMap &params = {});
+    void signalProcessGroup(int signal);
+    bool groupExists() const;
+    void onFinished(int exitCode, QProcess::ExitStatus exitStatus);
+    void onError(QProcess::ProcessError error);
+    void finish(QString status, QString reason, int exitCode = -1,
+                QProcess::ExitStatus exitStatus = QProcess::CrashExit,
+                const QString &reasonKey = {}, const QVariantMap &params = {});
     QString findTool(const QString &name, const QString &overridePath) const;
+    void loadHistory();
+    void saveHistory() const;
 
     QProcess m_process;
+    QFutureWatcher<TestCommand> m_preparation;
+    QTimer m_killTimer;
+    QTimer m_timeoutTimer;
+    QTimer m_progressTimer;
+    QElapsedTimer m_elapsed;
+    QElapsedTimer m_thermalAge;
     QVariantMap m_state;
     QVariantList m_history;
     QVariantList m_capabilities;
     QString m_stressNgPath;
     QString m_sysbenchPath;
+    QString m_procRoot;
+    QString m_historyPath;
     QString m_kind;
     QString m_type;
-    QString m_unit;
     QString m_output;
+    QString m_version;
     QString m_stopStatus;
     QString m_stopReason;
-    QTimer *m_killTimer = nullptr;
-    QTimer *m_timeoutTimer = nullptr;
+    QString m_stopReasonKey;
+    QVariantMap m_stopReasonParams;
+    QString m_resultStatus;
+    QString m_resultReason;
+    QString m_resultReasonKey;
+    QVariantMap m_resultReasonParams;
     qint64 m_startedAtMs = 0;
+    qint64 m_processGroup = 0;
     int m_duration = 0;
-    int m_load = 0;
-    int m_threads = 0;
-    int m_memoryMiB = 0;
+    bool m_active = false;
+    bool m_preparing = false;
+    bool m_rootFinished = false;
+    bool m_thermalAvailable = false;
+    double m_temperature = 0.0;
+    int m_exitCode = -1;
+    QProcess::ExitStatus m_exitStatus = QProcess::CrashExit;
 };
 
 } // namespace neko

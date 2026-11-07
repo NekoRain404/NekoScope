@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=NekoScope
+GenericName=Hardware Information
+GenericName[zh_CN]=硬件信息
+Comment=Explore hardware, monitor sensors and run diagnostics
+Comment[zh_CN]=查看硬件信息、监测传感器并运行诊断
+Exec=nekoscope
+Icon=io.nekoscope.NekoScope
+Terminal=false
+Categories=System;Monitor;
+Keywords=hardware;sensors;cpu;gpu;benchmark;
+StartupNotify=true
