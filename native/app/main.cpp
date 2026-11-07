@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QPalette>
 #include <QJsonDocument>
 #include <QImage>
 #include <QQmlApplicationEngine>
